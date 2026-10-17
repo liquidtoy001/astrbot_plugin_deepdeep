@@ -38,12 +38,13 @@ status=0
 echo "### 接口检查" >>"$REPORT"
 echo '```text' >>"$REPORT"
 if docker run --rm --network none --entrypoint python -w /AstrBot \
-  -v "$ROOT/scripts:/probe:ro" "$IMAGE" /probe/compat_probe.py >"$WORK/probe.txt" 2>&1; then
+  -v "$ROOT/scripts:/probe:ro" "$IMAGE" -W ignore /probe/compat_probe.py >"$WORK/probe.txt" 2>&1; then
   :
 else
   status=1
 fi
-cat "$WORK/probe.txt" | tee -a "$REPORT"
+# 导入 AstrBot 时会打印启动日志和第三方库的警告，报告里只保留检查结果
+sed -E 's/\x1b\[[0-9;]*m//g' "$WORK/probe.txt" | grep -E '^(✓|✗)|项通过|Traceback|Error' | tee -a "$REPORT"
 echo '```' >>"$REPORT"
 
 # ---------- 2. 真实加载 ----------
