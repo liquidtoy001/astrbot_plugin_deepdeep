@@ -1,0 +1,19 @@
+{
+  "metadata": {
+    "display_name": "DeepDeep",
+    "short_desc": "搜索管理器：分工协作、自动降级、费用上限与调用日志",
+    "desc": "让 DeepSeek 搜索、AstrBot 内置网页搜索和各类搜索插件分工协作：通用搜索与图片、视频、学术、GitHub 等专用搜索各司其职；DeepSeek 优先，故障或超出预算时自动降级；带费用上限、各搜索工具用量统计、全工具调用日志和可视化面板。"
+  },
+  "views": {
+    "dashboard": {
+      "title": "DeepDeep 面板",
+      "description": "费用与用量、各搜索工具统计、路由与分工设置、调用日志。"
+    }
+  },
+  "pages": {
+    "dashboard": {
+      "title": "DeepDeep 面板",
+      "description": "费用与用量、各搜索工具统计、路由与分工设置、调用日志。"
+    }
+  }
+}

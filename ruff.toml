@@ -1,0 +1,16 @@
+# 独立配置：插件单独检出或放在 AstrBot 的 data/plugins 下时都使用同一套规则
+line-length = 88
+target-version = "py310"
+exclude = ["pages", "*.md"]
+
+[lint]
+select = ["F", "E", "W", "I", "UP", "B", "ASYNC", "C4", "SIM", "RUF", "BLE", "T20"]
+ignore = [
+  "E501",    # 交给 formatter；中文提示文本难以按 88 列断行
+  "RUF001",  # 中文字符串里的全角标点
+  "RUF002",
+  "RUF003",
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["BLE001", "T20", "ASYNC240"]

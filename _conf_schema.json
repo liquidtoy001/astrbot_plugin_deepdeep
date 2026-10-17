@@ -1,0 +1,211 @@
+{
+    "api_key": {
+        "type": "string",
+        "description": "DeepSeek API Key",
+        "default": "",
+        "hint": "留空时自动复用 AstrBot 中已配置的 DeepSeek 官方提供商（api_base 为 api.deepseek.com）的 Key",
+        "secret": true
+    },
+    "routing_mode": {
+        "type": "string",
+        "description": "搜索路由模式",
+        "default": "guide_only",
+        "options": [
+            "guide_only",
+            "deepseek_first",
+            "deepseek_only",
+            "fallback_only",
+            "coexist"
+        ],
+        "labels": [
+            "只引导，不隐藏工具（推荐）",
+            "DeepSeek 优先，隐藏同类工具",
+            "只用 DeepSeek",
+            "暂停 DeepSeek，只用其他搜索",
+            "不干预，也不加分工说明以外的规则"
+        ],
+        "hint": "“只引导”不隐藏任何工具，只在分工说明里写清先用谁、什么情况再换；工具列表始终不变，不会让模型的提示词缓存失效，长对话最省钱。“DeepSeek 优先”会在 DeepSeek 可用时隐藏同类工具，选择更集中，但每次切换都会让缓存失效一次"
+    },
+    "billing_currency": {
+        "type": "string",
+        "description": "计费币种",
+        "default": "cny",
+        "options": [
+            "cny",
+            "usd"
+        ],
+        "labels": [
+            "人民币（中国站，每千次 ¥5）",
+            "美元（国际站，每千次 $0.75）"
+        ],
+        "hint": "按你的 DeepSeek 账户计费方式选择。费用统计和费用上限都按这个币种计算"
+    },
+    "daily_budget": {
+        "type": "float",
+        "description": "每日费用上限",
+        "default": 0.0,
+        "hint": "按计费币种计算，0 表示不限制。达到上限后当天自动降级到其他搜索工具"
+    },
+    "monthly_budget": {
+        "type": "float",
+        "description": "每月费用上限",
+        "default": 30.0,
+        "hint": "按计费币种计算，0 表示不限制。按自然月统计，达到上限后当月自动降级"
+    },
+    "exchange_rate": {
+        "type": "float",
+        "description": "汇率（1 美元兑人民币）",
+        "default": 7.1,
+        "hint": "只用于把费用换算成另一种币种显示，不影响费用上限。填 0 不显示换算"
+    },
+    "fallback_tool_patterns": {
+        "type": "list",
+        "description": "备用搜索工具（匹配规则）",
+        "default": [
+            "*web_search*",
+            "*web_fetch*",
+            "*fetch_url*",
+            "*fetch_web_page*",
+            "*_extract_web_page",
+            "exa_get_contents",
+            "exa-search",
+            "anysearch_*",
+            "gemini_search"
+        ],
+        "hint": "可以互相替代的通用搜索工具（支持 * 通配）：DeepSeek 可用时隐藏，不可用时放出。默认已覆盖 AstrBot 内置网页搜索和插件市场里常见的搜索插件；匹配了分工规则的工具不算备用"
+    },
+    "specialist_rules": {
+        "type": "list",
+        "description": "搜索分工规则",
+        "default": [
+            "*image* = 找图片",
+            "*video* = 找视频（B 站、YouTube 等视频平台）",
+            "*music* = 找音乐",
+            "*map* = 地点和地图",
+            "*academic* = 学术论文和期刊",
+            "*paper* = 学术论文（arXiv 等）",
+            "*github* = GitHub 上的仓库、代码、Issue 和 PR",
+            "search_repositories = GitHub 上的仓库、代码、Issue 和 PR",
+            "search_code = GitHub 上的仓库、代码、Issue 和 PR",
+            "search_issues = GitHub 上的仓库、代码、Issue 和 PR",
+            "search_pull_requests = GitHub 上的仓库、代码、Issue 和 PR",
+            "*aur* = Arch Linux AUR 软件包",
+            "*code-context* = 编程文档和代码示例",
+            "*webshot* = 网页截图",
+            "astr_kb_search = 本地知识库里的资料"
+        ],
+        "hint": "每条写成“工具名规则 = 擅长什么”，支持 * 通配。匹配的工具视为专用搜索：始终保留、不当作备用，并写进“搜索工具分工”提示，让模型按需求选工具"
+    },
+    "inject_search_guide": {
+        "type": "bool",
+        "description": "向模型说明搜索工具分工",
+        "default": true,
+        "hint": "在每次请求的系统提示末尾加一小段分工说明，只列出本次实际可用的工具。内容随工具集固定，不影响提示词缓存"
+    },
+    "circuit_threshold": {
+        "type": "int",
+        "description": "熔断阈值（连续失败次数）",
+        "default": 3,
+        "hint": "DeepSeek 连续失败这么多次后暂停使用一段时间。余额不足或 Key 无效时立即暂停 30 分钟"
+    },
+    "circuit_cooldown_seconds": {
+        "type": "int",
+        "description": "熔断冷却时间（秒）",
+        "default": 300
+    },
+    "default_count": {
+        "type": "int",
+        "description": "默认搜索结果数",
+        "default": 5,
+        "hint": "模型未指定数量时使用。计费按请求次数，与结果数无关，但结果越多占用上下文越多"
+    },
+    "max_count": {
+        "type": "int",
+        "description": "单次搜索结果数上限",
+        "default": 10,
+        "hint": "限制模型一次最多要多少条结果，最大 50"
+    },
+    "min_rerank_score": {
+        "type": "float",
+        "description": "最低相关度",
+        "default": 0.5,
+        "hint": "低于该值的结果会被丢弃（范围 0–3）。刚发布的内容分数往往偏低，查询中带 after:/before: 时不按分数过滤。全部低于阈值时仍保留最靠前的 2 条"
+    },
+    "include_content": {
+        "type": "bool",
+        "description": "搜索时附带网页正文",
+        "default": false,
+        "hint": "开启后每条结果附带部分正文，信息更多但更占上下文。一般用 summary 就够了"
+    },
+    "content_chars_per_result": {
+        "type": "int",
+        "description": "每条结果正文字数上限",
+        "default": 800,
+        "hint": "仅在开启“附带网页正文”时生效"
+    },
+    "max_search_chars": {
+        "type": "int",
+        "description": "搜索结果总字数上限",
+        "default": 6000,
+        "hint": "返回给模型的搜索结果总长度上限，超出时按条截断"
+    },
+    "max_fetch_chars": {
+        "type": "int",
+        "description": "网页抓取字数上限",
+        "default": 8000,
+        "hint": "抓取的网页正文超过该长度时截断"
+    },
+    "send_original_question": {
+        "type": "bool",
+        "description": "附带用户原始问题",
+        "default": true,
+        "hint": "把触发搜索的用户消息（前 128 字）作为 ori_question 发给 DeepSeek，帮助理解查询意图"
+    },
+    "cache_ttl_seconds": {
+        "type": "int",
+        "description": "缓存时长（秒）",
+        "default": 600,
+        "hint": "相同查询在该时间内直接返回缓存，不再计费。设为 0 关闭缓存"
+    },
+    "request_timeout": {
+        "type": "int",
+        "description": "请求超时（秒）",
+        "default": 20
+    },
+    "max_retries": {
+        "type": "int",
+        "description": "失败重试次数",
+        "default": 2,
+        "hint": "仅对限流（429）、超时和服务端错误重试"
+    },
+    "qps_limit": {
+        "type": "float",
+        "description": "本地限速（每秒请求数）",
+        "default": 5,
+        "hint": "官方限制为搜索、抓取各 5 QPS（按账号计算）。多个程序共用同一账号时请调低"
+    },
+    "record_queries": {
+        "type": "bool",
+        "description": "在 WebUI 中显示最近的搜索词",
+        "default": true,
+        "hint": "只保存在内存里（最近 100 条），重启清空。关闭后只记录调用结果，不记录搜索词和链接"
+    },
+    "call_log_enabled": {
+        "type": "bool",
+        "description": "记录工具调用日志",
+        "default": true,
+        "hint": "记录所有工具（不只是 DeepSeek）的调用，保存在插件数据目录的 calls.db，可在插件面板中筛选、查看和导出"
+    },
+    "call_log_record_other_content": {
+        "type": "bool",
+        "description": "记录其他工具的完整参数和结果",
+        "default": false,
+        "hint": "默认只记录其他工具的名称、来源、耗时和状态。开启后还会保存它们的调用参数和返回结果（可能包含用户的聊天内容），便于排查"
+    },
+    "call_log_retention_days": {
+        "type": "int",
+        "description": "调用日志保留天数",
+        "default": 14,
+        "hint": "超过天数的记录自动删除；另有最多 50000 条的上限"
+    }
+}

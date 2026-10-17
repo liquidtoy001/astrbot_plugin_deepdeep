@@ -1,0 +1,124 @@
+{
+  "metadata": {
+    "display_name": "DeepDeep",
+    "short_desc": "Search manager: division of labor, fallback, spending caps and call log",
+    "desc": "Lets DeepSeek search, AstrBot's built-in web search and community search plugins work together by specialty: general search plus specialists for images, videos, papers, GitHub and more. DeepSeek first with automatic fallback on outages or spending caps, per-tool usage stats, a call log for all tools and a dashboard."
+  },
+  "config": {
+    "api_key": {
+      "description": "DeepSeek API key",
+      "hint": "Leave empty to reuse the key of an existing DeepSeek provider (api_base on api.deepseek.com)."
+    },
+    "routing_mode": {
+      "description": "Routing mode",
+      "labels": [
+        "Guide only, never hide tools (recommended)",
+        "DeepSeek first, hide overlapping tools",
+        "DeepSeek only",
+        "Pause DeepSeek, use other search tools",
+        "Don't interfere"
+      ],
+      "hint": "\"Guide only\" keeps every tool and states priorities in the guide, so the tool list never changes and prompt caching is never invalidated. \"DeepSeek first\" hides overlapping tools while DeepSeek works; each switch invalidates the cache once."
+    },
+    "fallback_tool_patterns": {
+      "description": "Fallback search tools (patterns)",
+      "hint": "Tool names matching these patterns (* wildcard) are hidden while DeepSeek works and shown when it doesn't."
+    },
+    "circuit_threshold": {
+      "description": "Circuit breaker threshold (consecutive failures)"
+    },
+    "circuit_cooldown_seconds": {
+      "description": "Circuit breaker cooldown (seconds)"
+    },
+    "default_count": {
+      "description": "Default result count"
+    },
+    "max_count": {
+      "description": "Max results per search"
+    },
+    "min_rerank_score": {
+      "description": "Minimum relevance score"
+    },
+    "include_content": {
+      "description": "Include page content in search results"
+    },
+    "content_chars_per_result": {
+      "description": "Content characters per result"
+    },
+    "max_search_chars": {
+      "description": "Max characters of search output"
+    },
+    "max_fetch_chars": {
+      "description": "Max characters of fetched page"
+    },
+    "send_original_question": {
+      "description": "Send the user's original question"
+    },
+    "cache_ttl_seconds": {
+      "description": "Cache TTL (seconds)"
+    },
+    "request_timeout": {
+      "description": "Request timeout (seconds)"
+    },
+    "max_retries": {
+      "description": "Retries"
+    },
+    "qps_limit": {
+      "description": "Local rate limit (requests per second)"
+    },
+    "record_queries": {
+      "description": "Show recent queries in the dashboard"
+    },
+    "call_log_enabled": {
+      "description": "Record tool call log",
+      "hint": "Records calls of all tools, not only DeepSeek, in calls.db under the plugin data directory."
+    },
+    "call_log_record_other_content": {
+      "description": "Record full args and results of other tools",
+      "hint": "By default only name, source, duration and status are kept for other tools."
+    },
+    "call_log_retention_days": {
+      "description": "Call log retention (days)"
+    },
+    "billing_currency": {
+      "description": "Billing currency",
+      "labels": [
+        "CNY (China site, ¥5 per 1,000)",
+        "USD (international site, $0.75 per 1,000)"
+      ],
+      "hint": "Match your DeepSeek account. Costs and spending caps use this currency."
+    },
+    "daily_budget": {
+      "description": "Daily spending cap",
+      "hint": "In the billing currency. 0 means unlimited."
+    },
+    "monthly_budget": {
+      "description": "Monthly spending cap",
+      "hint": "In the billing currency, calendar month. 0 means unlimited."
+    },
+    "exchange_rate": {
+      "description": "Exchange rate (CNY per USD)",
+      "hint": "Only used to show costs in the other currency."
+    },
+    "specialist_rules": {
+      "description": "Search specialist rules",
+      "hint": "One per line: \"tool pattern = what it is good at\" (* wildcard). Matching tools are kept as specialists and described to the model."
+    },
+    "inject_search_guide": {
+      "description": "Tell the model which search tool does what",
+      "hint": "Appends a short, stable guide listing only the tools available in the request."
+    }
+  },
+  "views": {
+    "dashboard": {
+      "title": "DeepDeep Dashboard",
+      "description": "Spending and usage, per-tool search stats, routing and specialist settings, call log."
+    }
+  },
+  "pages": {
+    "dashboard": {
+      "title": "DeepDeep Dashboard",
+      "description": "Spending and usage, per-tool search stats, routing and specialist settings, call log."
+    }
+  }
+}

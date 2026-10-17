@@ -1,0 +1,61 @@
+name: Release
+
+# 在 main 上修改 metadata.yaml 的 version 后自动打 tag 并发布 Release；
+# 也可以手动运行。发布说明取自 CHANGELOG.md 中对应版本的段落。
+on:
+  push:
+    branches: [main]
+    paths: [metadata.yaml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: v
+        run: |
+          VERSION=$(sed -nE 's/^version:[[:space:]]*"?([^"#[:space:]]+)"?.*/\1/p' metadata.yaml)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $VERSION already exists, skipping."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract release notes
+        if: steps.v.outputs.exists == 'false'
+        run: |
+          awk -v ver="## ${{ steps.v.outputs.version }}" '
+            index($0, ver) == 1 { flag = 1; next }
+            /^## / && flag { exit }
+            flag
+          ' CHANGELOG.md > notes.md
+          test -s notes.md || echo "见 CHANGELOG.md" > notes.md
+          cat notes.md
+
+      - name: Package
+        if: steps.v.outputs.exists == 'false'
+        run: |
+          NAME=astrbot_plugin_deepdeep
+          git archive --format=zip --prefix="$NAME/" -o "${NAME}_${{ steps.v.outputs.version }}.zip" HEAD
+          unzip -l "${NAME}_${{ steps.v.outputs.version }}.zip"
+
+      - name: Publish
+        if: steps.v.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.v.outputs.version }}" \
+            --target "${{ github.sha }}" \
+            --title "${{ steps.v.outputs.version }}" \
+            --notes-file notes.md \
+            astrbot_plugin_deepdeep_*.zip

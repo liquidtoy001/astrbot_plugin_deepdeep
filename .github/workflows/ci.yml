@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: check
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: format --check
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # AstrBot 4.29 要求 Python >= 3.12
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+
+  validate:
+    name: Validate plugin files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install PyYAML
+      - name: Check metadata, schema, i18n and view
+        run: |
+          python - <<'PY'
+          import json, pathlib, re, yaml
+          root = pathlib.Path(".")
+          meta = yaml.safe_load((root / "metadata.yaml").read_text(encoding="utf-8"))
+          for f in ("name", "author", "desc", "version", "repo"):
+              assert meta.get(f), f"metadata.yaml 缺少 {f}"
+          assert re.fullmatch(r"v\d+\.\d+\.\d+", meta["version"]), "版本号格式应为 vX.Y.Z"
+          main = (root / "main.py").read_text(encoding="utf-8")
+          assert f'PLUGIN_VERSION = "{meta["version"]}"' in main, "main.py 中的版本号与 metadata.yaml 不一致"
+          assert f"## {meta['version']}" in (root / "CHANGELOG.md").read_text(encoding="utf-8"), "CHANGELOG.md 缺少当前版本"
+          json.loads((root / "_conf_schema.json").read_text(encoding="utf-8"))
+          for p in (root / ".astrbot-plugin" / "i18n").glob("*.json"):
+              json.loads(p.read_text(encoding="utf-8"))
+          assert (root / "pages" / "dashboard" / "index.html").exists()
+          print("ok", meta["version"])
+          PY
+      - name: Check view script syntax
+        run: node --check pages/dashboard/app.js
+      - name: Check AstrBot plugin rules
+        run: |
+          # 规范：日志用 astrbot.api.logger（core/log.py 为测试环境的兜底除外）；不用 requests；不用 print
+          ! grep -rnE "logging[.]getLogger|^import requests|^from requests|(^|[^_a-zA-Z.])print[(]" --include=*.py --exclude-dir=tests --exclude-dir=.github . | grep -v "^./core/log.py:"
+          test -f requirements.txt
+          test -f logo.png
+          python - <<'PY'
+          import struct
+          with open("logo.png", "rb") as f:
+              head = f.read(24)
+          w, h = struct.unpack(">II", head[16:24])
+          assert w == h, f"logo.png 需为 1:1，当前 {w}x{h}"
+          print("logo", w, h)
+          PY

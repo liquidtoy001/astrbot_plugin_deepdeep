@@ -1,0 +1,45 @@
+name: 问题反馈
+description: 插件出错或行为不符合预期
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: 提交前请确认已更新到最新版本。**不要在日志里贴出 API Key。**
+  - type: input
+    id: plugin_version
+    attributes:
+      label: 插件版本
+      placeholder: v1.0.0
+    validations:
+      required: true
+  - type: input
+    id: astrbot_version
+    attributes:
+      label: AstrBot 版本
+      placeholder: v4.29.0
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: 路由模式
+      options: [DeepSeek 优先, 只用 DeepSeek, 暂停 DeepSeek, 不干预]
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 期望的行为和实际的行为
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断信息
+      description: 插件面板最下方「诊断信息」→ 生成 → 复制，粘贴到这里（不含 API Key）
+      render: json
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志
+      description: AstrBot 日志中带 `[deepdeep]` 的行；如果知道请求 ID（工具结果第一行的 #xxxxxx），请一并写上
+      render: text

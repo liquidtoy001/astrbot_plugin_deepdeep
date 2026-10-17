@@ -1,0 +1,5 @@
+aiohttp>=3.9
+pytest>=8
+pytest-asyncio>=0.24
+docstring_parser>=0.16
+PyYAML>=6

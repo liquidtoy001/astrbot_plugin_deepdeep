@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: DeepSeek Search & Fetch API 文档
+    url: https://api-docs.deepseek.com/guides/search
+    about: 接口行为、价格和限流以官方文档为准

@@ -1,0 +1,10 @@
+* text=auto eol=lf
+*.png binary
+
+# 发布包（git archive）里不需要的开发文件
+.github/ export-ignore
+tests/ export-ignore
+pytest.ini export-ignore
+ruff.toml export-ignore
+requirements-dev.txt export-ignore
+CONTRIBUTING.md export-ignore
