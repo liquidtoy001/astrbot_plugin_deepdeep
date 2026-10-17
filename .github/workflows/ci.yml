@@ -74,7 +74,7 @@ jobs:
       - name: Check AstrBot plugin rules
         run: |
           # 规范：日志用 astrbot.api.logger（core/log.py 为测试环境的兜底除外）；不用 requests；不用 print
-          ! grep -rnE "logging[.]getLogger|^import requests|^from requests|(^|[^_a-zA-Z.])print[(]" --include=*.py --exclude-dir=tests --exclude-dir=.github . | grep -v "^./core/log.py:"
+          ! grep -rnE "logging[.]getLogger|^import requests|^from requests|(^|[^_a-zA-Z.])print[(]" --include=*.py --exclude-dir=tests --exclude-dir=.github --exclude-dir=scripts . | grep -v "^./core/log.py:"
           test -f requirements.txt
           test -f logo.png
           python - <<'PY'

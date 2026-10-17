@@ -14,3 +14,4 @@ ignore = [
 
 [lint.per-file-ignores]
 "tests/*" = ["BLE001", "T20", "ASYNC240"]
+"scripts/*" = ["T20", "BLE001", "E501"]  # 兼容性探针需要输出结果

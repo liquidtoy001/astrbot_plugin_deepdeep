@@ -21,6 +21,24 @@ ruff check . && ruff format --check .
 - 需要给用户展示的排查信息写进 `ActivityLog` 的 `detail`，工具结束时会随调用日志一起持久化，面板会自动展示
 - 调用日志（`core/calllog.py`）的方法是同步的，在异步代码里一律用 `asyncio.to_thread` 调用；记录失败只记 WARNING，绝不能影响工具调用本身
 
+## 兼容性检查
+
+`.github/workflows/compat.yml` 每周一（北京时间 10:00）用最新的 AstrBot 正式版自动检查：
+
+1. 跑一遍单元测试
+2. 在 AstrBot 官方 Docker 镜像里运行 `scripts/compat_probe.py`，逐项检查插件依赖的接口（工具注册、各个钩子、`astrbot.api.web`、插件页面目录、钩子触发顺序等）
+3. 挂载插件真正启动一次 AstrBot，确认插件加载成功、两个工具都注册了、没有相关报错
+
+不通过时会自动创建标签为 `compat` 的 issue；同一个版本已有未关闭的 issue 时改为追加评论。镜像还没发布时本周跳过。
+
+也可以在 GitHub 的 Actions 页面手动运行，指定任意版本（如 `v4.26.0`），勾选 dry run 时只在日志里输出 issue 内容。本地运行：
+
+```bash
+bash scripts/compat_check.sh v4.29.1
+```
+
+AstrBot 改了插件依赖的接口时，按报告修复后，记得同步更新 `metadata.yaml` 的 `astrbot_version` 和 README 里的版本要求。
+
 ## 提交规范
 
 提交信息使用 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)，例如 `feat: 支持每周费用上限`、`fix: 熔断后未恢复`。
