@@ -75,7 +75,7 @@ errors=$(grep -iE "deepdeep" "$WORK/astrbot.log" | grep -iE "error|exception|tra
 tb=$(grep -A25 "Traceback" "$WORK/astrbot.log" | grep -B5 -A20 "$PLUGIN" | head -60 || true)
 
 grep -m1 -oE "AstrBot v[0-9][0-9a-z.\-]*" "$WORK/astrbot.log" | tee -a "$REPORT" || true
-grep -E "$PLUGIN|deepdeep_web" "$WORK/astrbot.log" | cut -c1-200 | tee -a "$REPORT" || true
+grep -E "$PLUGIN|deepdeep_(web|tavily)" "$WORK/astrbot.log" | cut -c1-200 | tee -a "$REPORT" || true
 if [ "$loaded" -lt 1 ]; then
   echo "✗ 插件没有加载成功" | tee -a "$REPORT"
   status=1
