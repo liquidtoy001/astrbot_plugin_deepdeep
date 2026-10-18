@@ -16,6 +16,7 @@ from typing import Any
 
 from .activity import ActivityLog
 from .calllog import CallLog
+from .health import classify, extract_query
 
 REQUEST_ID_RE = re.compile(r"#([0-9a-f]{6})\]")
 
@@ -83,8 +84,9 @@ class ToolCallRecorder:
         # 其他工具的参数和结果默认不记录，只记工具名、耗时和状态
         self.record_other_content = False
         self._clock = clock
-        self._pending: dict[tuple[int, str], deque[tuple[int, float]]] = defaultdict(
-            deque
+        # (记录 ID, 开始时间, 搜索词)；搜索词只留在内存里，用来算结果的相关度
+        self._pending: dict[tuple[int, str], deque[tuple[int, float, str | None]]] = (
+            defaultdict(deque)
         )
 
     def _record_content(self, source: str) -> bool:
@@ -108,14 +110,16 @@ class ToolCallRecorder:
             args=args,
             record_content=self._record_content(source),
         )
-        self._pending[(event_key, name)].append((row_id, self._clock()))
+        self._pending[(event_key, name)].append(
+            (row_id, self._clock(), extract_query(args))
+        )
 
     async def on_end(self, event_key: int, tool: Any, tool_result: Any) -> None:
         name = getattr(tool, "name", "unknown")
         queue = self._pending.get((event_key, name))
         if not queue:
             return
-        row_id, started = queue.popleft()
+        row_id, started, query = queue.popleft()
         if not queue:
             self._pending.pop((event_key, name), None)
         duration = int((self._clock() - started) * 1000)
@@ -132,6 +136,10 @@ class ToolCallRecorder:
                 "error": text if is_error else None,
             }
             record = self.record_other_content
+        if fields["status"] == "ok":
+            quality, score = classify(query, text)
+            fields["quality"] = quality
+            fields["relevance"] = score
         await asyncio.to_thread(
             self.log.finish,
             row_id,
@@ -161,7 +169,7 @@ class ToolCallRecorder:
         keys = [k for k in self._pending if k[0] == event_key]
         closed = 0
         for key in keys:
-            for row_id, started in self._pending.pop(key, ()):
+            for row_id, started, _query in self._pending.pop(key, ()):
                 await asyncio.to_thread(
                     self.log.finish,
                     row_id,

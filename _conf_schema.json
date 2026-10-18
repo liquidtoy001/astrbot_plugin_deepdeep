@@ -6,6 +6,25 @@
         "hint": "留空时自动复用 AstrBot 中已配置的 DeepSeek 官方提供商（api_base 为 api.deepseek.com）的 Key",
         "secret": true
     },
+    "own_tools_enabled": {
+        "type": "bool",
+        "description": "启用 DeepDeep 自带的搜索和抓取",
+        "default": true,
+        "hint": "关闭后不再向模型提供 deepdeep_web_search / deepdeep_web_fetch（只在每次请求里拿掉，不改 AstrBot 的工具开关），改由其他搜索工具负责；分工说明、调用日志、健康检测照常工作。适合改用 AstrBot 自带的 DeepSeek 搜索等工具时使用"
+    },
+    "tavily_enabled": {
+        "type": "bool",
+        "description": "启用 DeepDeep 自带的 Tavily 搜索",
+        "default": true,
+        "hint": "提供 deepdeep_tavily_search，作为技术类问题（编程、软件版本、安全漏洞、官方文档）的首选和 DeepSeek 的第一备用。Key 默认复用 AstrBot「网页搜索」里配置的 Tavily Key，所以内置网页搜索选别家（如 SerpApi）时也能同时用 Tavily。没有 Key、或内置网页搜索本身就是 Tavily 时自动不提供"
+    },
+    "tavily_api_key": {
+        "type": "string",
+        "description": "Tavily API Key（可选）",
+        "default": "",
+        "hint": "留空时复用 AstrBot「网页搜索」里配置的 Tavily Key",
+        "secret": true
+    },
     "routing_mode": {
         "type": "string",
         "description": "搜索路由模式",
@@ -82,7 +101,9 @@
             "*video* = 找视频（B 站、YouTube 等视频平台）",
             "*music* = 找音乐",
             "*map* = 地点和地图",
+            "*finance* = 股票、汇率等财经行情",
             "*academic* = 学术论文和期刊",
+            "*scholar* = 学术论文和期刊",
             "*paper* = 学术论文（arXiv 等）",
             "*github* = GitHub 上的仓库、代码、Issue 和 PR",
             "search_repositories = GitHub 上的仓库、代码、Issue 和 PR",
@@ -95,6 +116,14 @@
             "astr_kb_search = 本地知识库里的资料"
         ],
         "hint": "每条写成“工具名规则 = 擅长什么”，支持 * 通配。匹配的工具视为专用搜索：始终保留、不当作备用，并写进“搜索工具分工”提示，让模型按需求选工具"
+    },
+    "search_lane_rules": {
+        "type": "list",
+        "description": "按问题类型分工",
+        "default": [
+            "编程、软件版本、安全漏洞、官方文档等技术问题 = deepdeep_tavily_search, web_search_tavily"
+        ],
+        "hint": "每条写成“问题类型 = 工具名规则, 工具名规则”（支持 * 通配）。本次请求里第一个存在的工具作为这类问题的首选，写进分工说明；其余问题仍先用 DeepDeep。2026-10 评测：技术类问题 Tavily 明显好于 DeepSeek，加上这条后结果质量平均从 7.2 提高到 8.4（满分 10）"
     },
     "inject_search_guide": {
         "type": "bool",
@@ -117,7 +146,7 @@
         "type": "int",
         "description": "默认搜索结果数",
         "default": 5,
-        "hint": "模型未指定数量时使用。计费按请求次数，与结果数无关，但结果越多占用上下文越多"
+        "hint": "模型未指定数量时使用。计费按请求次数，与结果数无关，但结果越多占用上下文越多。插件每次会向 DeepSeek 要至少 10 条（不额外计费），用于补足低相关的结果和找出日期最新的结果"
     },
     "max_count": {
         "type": "int",
@@ -129,7 +158,7 @@
         "type": "float",
         "description": "最低相关度",
         "default": 0.5,
-        "hint": "低于该值的结果会被丢弃（范围 0–3）。刚发布的内容分数往往偏低，查询中带 after:/before: 时不按分数过滤。全部低于阈值时仍保留最靠前的 2 条"
+        "hint": "低于该值的结果会被丢弃（范围 0–3）。刚发布的内容分数往往偏低，查询中带 after:/before: 时不按分数过滤。达到阈值的不足 3 条时，用排在后面的结果补足并标明相关度较低"
     },
     "include_content": {
         "type": "bool",

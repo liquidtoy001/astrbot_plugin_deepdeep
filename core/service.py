@@ -24,12 +24,16 @@ from .formatter import (
     format_fetch_result,
     format_search_results,
     has_date_filter,
+    select_results,
     wants_recent,
 )
 from .guard import Availability, BudgetGuard, CircuitBreaker
 from .log import logger
 from .pricing import format_amount, format_money
 from .stats import UsageStats
+
+# 每次向 API 至少要这么多条结果（不额外计费）
+API_MIN_COUNT = 10
 
 
 @dataclass(slots=True)
@@ -175,16 +179,20 @@ class SearchService:
                 request_id=rid,
             )
         n = coerce_count(count, s)
+        # 按次计费、与结果数无关：多要几条，用来补足低相关时的结果和找日期最新的结果，
+        # 给模型看的仍是 n 条左右
+        api_n = max(n, API_MIN_COUNT)
         ori = original_question if s.send_original_question else None
         detail: dict[str, Any] = {
             "request": {
                 "query": query,
                 "count": n,
+                "api_count": api_n,
                 "need_content": s.include_content,
                 "ori_question": (ori or "").strip()[:128] or None,
             }
         }
-        key = ("search", query, n, s.include_content)
+        key = ("search", query, api_n, s.include_content)
 
         results: list[SearchResult] | None = self.cache.get(key)
         latency = 0
@@ -200,7 +208,7 @@ class SearchService:
             try:
                 results = await self.client.search(
                     query,
-                    count=n,
+                    count=api_n,
                     ori_question=ori,
                     need_content=s.include_content,
                     trace=trace,
@@ -219,6 +227,7 @@ class SearchService:
         body = format_search_results(
             query,
             results,
+            count=n,
             min_score=s.min_rerank_score,
             max_chars=s.max_search_chars,
             include_content=s.include_content,
@@ -247,11 +256,13 @@ class SearchService:
             detail=detail,
         )
         self._log_call("search", rid, outcome, query, latency, len(results), detail)
+        shown = select_results(query, results, n, s.min_rerank_score).total
+        detail["shown"] = shown
         head = status_line(
             "search",
             rid,
             "缓存" if outcome == "cache_hit" else "成功",
-            f"{len(results)} 条结果",
+            f"{shown} 条结果" if results else "0 条结果",
             f"{latency} ms" if latency else "",
         )
         # 没有结果、或结果相关度都很低：不算故障，但值得换个搜索工具再试

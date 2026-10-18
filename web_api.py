@@ -19,8 +19,17 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 from astrbot.api.web import error_response, file_response, json_response, request
 
+from .core import connectivity, setup_check
+from .core.health import VERDICT_LABELS, assess
 from .core.pricing import CURRENCIES
-from .core.router import BUILTIN_WEB_SEARCH_TOOLS, ROUTING_MODES, ToolRouter
+from .core.router import (
+    BUILTIN_WEB_SEARCH_TOOLS,
+    OWN_TOOLS,
+    ROUTING_MODES,
+    TAVILY_TOOL,
+    ToolRouter,
+)
+from .core.uistate import UiState
 
 if TYPE_CHECKING:
     from .main import DeepSeekSearchPlugin
@@ -34,10 +43,20 @@ BUILTIN_PROVIDER_TOOLS = {
     "baidu_ai_search": ["web_search_baidu"],
     "exa": ["web_search_exa", "exa_get_contents"],
     "anysearch": ["web_search_anysearch"],
+    "serpapi": [
+        "web_search_serpapi",
+        "image_search_serpapi",
+        "finance_search_serpapi",
+        "scholar_search_serpapi",
+    ],
+    "deepseek": ["web_search_deepseek", "deepseek_fetch_web_page"],
 }
 
 # WebUI 允许修改的配置项及校验规则
 EDITABLE_FIELDS: dict[str, tuple[type, Any, Any]] = {
+    "own_tools_enabled": (bool, None, None),
+    "tavily_enabled": (bool, None, None),
+    "search_lane_rules": (list, None, None),
     "routing_mode": (str, None, None),
     "billing_currency": (str, None, None),
     "daily_budget": (float, 0, 100000),
@@ -130,6 +149,10 @@ class WebApi:
         self.plugin = plugin
         self.name = plugin_name
         self.version = version
+        # 最近一次连通性检测的结果（只在内存里）
+        self.last_network_check: dict[str, Any] | None = None
+        data_dir = getattr(plugin, "data_dir", None)
+        self.ui = UiState(Path(data_dir) / "ui_state.json" if data_dir else None)
 
     def register(self, context: Any) -> None:
         routes = [
@@ -142,6 +165,13 @@ class WebApi:
             ("reset-circuit", self.reset_circuit, ["POST"], "解除熔断"),
             ("diagnostics", self.diagnostics, ["GET"], "诊断信息"),
             ("search-stats", self.search_stats, ["GET"], "各搜索工具用量"),
+            ("overview", self.overview, ["GET"], "主力搜索工具和健康状况"),
+            ("network", self.network, ["GET"], "各搜索工具的网络说明"),
+            ("network-check", self.network_check, ["POST"], "检测连通性"),
+            ("ignore", self.ignore, ["POST"], "忽略提醒"),
+            ("unignore", self.unignore, ["POST"], "恢复提醒"),
+            ("disable-tools", self.disable_tools, ["POST"], "停用工具"),
+            ("enable-tools", self.enable_tools, ["POST"], "重新启用工具"),
             ("calls", self.calls, ["GET"], "调用日志列表"),
             ("call/<call_id>", self.call_detail, ["GET"], "调用日志详情"),
             ("call-facets", self.call_facets, ["GET"], "调用日志筛选项"),
@@ -157,6 +187,11 @@ class WebApi:
         c = self.plugin.config
         r = self.plugin.router
         return {
+            "own_tools_enabled": r.own_enabled,
+            "tavily_enabled": self.plugin.tavily_enabled,
+            "search_lane_rules": [
+                f"{desc} = {', '.join(pats)}" for desc, pats in r.lane_rules
+            ],
             "routing_mode": r.mode,
             "billing_currency": self.plugin.service.budget.currency.code,
             "daily_budget": self.plugin.service.budget.daily_limit,
@@ -175,6 +210,18 @@ class WebApi:
             "circuit_cooldown_seconds": int(self.plugin.service.breaker.cooldown),
         }
 
+    def tavily_status(self) -> dict[str, Any]:
+        keys, source = self.plugin.tavily_key_source()
+        usable, why = self.plugin.tavily_usable()
+        return {
+            "enabled": self.plugin.tavily_enabled,
+            "configured": bool(keys),
+            "masked": mask_key(keys[0]) if keys else "",
+            "source": source,
+            "usable": usable,
+            "reason": why,
+        }
+
     def status_data(self) -> dict[str, Any]:
         svc = self.plugin.service
         key, source = self.plugin.resolve_key_source()
@@ -185,6 +232,7 @@ class WebApi:
             "unavailable_code": avail.code,
             "unavailable_message": avail.message,
             "key": {"configured": bool(key), "masked": mask_key(key), "source": source},
+            "tavily": self.tavily_status(),
             "budget": svc.budget.snapshot(),
             "circuit": svc.breaker.snapshot(),
             "today": svc.stats.day(),
@@ -233,6 +281,8 @@ class WebApi:
                 router.mode,
                 fb or router.fallback_patterns,
                 rules or [f"{p} = {d}" for p, d in router.specialist_rules],
+                own_enabled=router.own_enabled,
+                lane_rules=[f"{d} = {', '.join(p)}" for d, p in router.lane_rules],
             )
         return json_response(
             {
@@ -240,6 +290,198 @@ class WebApi:
                 "builtin_known": BUILTIN_WEB_SEARCH_TOOLS,
             }
         )
+
+    def search_tool_names(self) -> list[str]:
+        """当前会出现在请求里的搜索类工具（关闭自带搜索时不含 DeepDeep 自己的）。"""
+        router = self.plugin.router
+        names = self.current_tool_names()
+        if not router.own_enabled:
+            names = [n for n in names if n not in OWN_TOOLS]
+        if TAVILY_TOOL in names and not self.plugin.tavily_usable(names)[0]:
+            names = [n for n in names if n != TAVILY_TOOL]
+        return sorted({n for n in names if router.search_category(n) is not None})
+
+    def health_data(self, range_key: str = "24h") -> dict[str, dict[str, Any]]:
+        """各搜索工具的健康结论：{工具名: {...}}。只做提示，不影响路由。"""
+        hours = RANGE_HOURS.get(range_key)
+        since = time.time() - hours * 3600 if hours else None
+        router = self.plugin.router
+        out: dict[str, dict[str, Any]] = {}
+        for row in self.plugin.call_log.tool_health(since):
+            if router.search_category(row["tool"]) is None:
+                continue
+            item = {**row, **assess(row)}
+            # 最近连续 3 次都有问题，即使整体比例不高也提醒
+            if item["bad_streak"] >= 3 and item["verdict"] in ("ok", "unknown"):
+                item["verdict"] = "degraded"
+                item["reason"] += f"；最近连续 {item['bad_streak']} 次有问题"
+            item["verdict_label"] = VERDICT_LABELS[item["verdict"]]
+            prev = out.get(row["tool"])
+            if prev is None or prev["total"] < item["total"]:
+                out[row["tool"]] = item
+        return out
+
+    def plugin_search_tools(self) -> dict[str, list[str]]:
+        """其他插件提供的搜索类工具：{插件名: [工具名, ...]}。"""
+        out: dict[str, list[str]] = {}
+        router = self.plugin.router
+        try:
+            tools = self.plugin.context.get_llm_tool_manager().func_list
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"[deepdeep] 读取工具列表失败: {exc}")
+            return out
+        for t in tools:
+            name = getattr(t, "name", "")
+            if not getattr(t, "active", True) or router.search_category(name) is None:
+                continue
+            module = getattr(t, "handler_module_path", None) or ""
+            plugin = self.plugin.resolve_plugin(module) if module else None
+            if plugin and plugin != self.name:
+                out.setdefault(plugin, []).append(name)
+        return out
+
+    def config_dir(self) -> Path | None:
+        data_dir = self.plugin.data_dir
+        return Path(data_dir).parent.parent / "config" if data_dir else None
+
+    def setup_data(self) -> dict[str, Any]:
+        """各搜索工具的配置检查（只读配置，不发请求）。"""
+        cdir = self.config_dir()
+        plugins = [
+            setup_check.check_plugin(p, tools, setup_check.load_plugin_config(cdir, p))
+            for p, tools in sorted(self.plugin_search_tools().items())
+        ]
+        return setup_check.build(
+            deepseek=setup_check.check_deepseek(
+                self.plugin.resolve_key_source(), self.plugin.router.own_enabled
+            ),
+            tavily=setup_check.check_tavily(self.tavily_status()),
+            builtin=setup_check.check_builtin(
+                self.plugin._builtin_web_search(), BUILTIN_PROVIDER_TOOLS
+            ),
+            plugins=plugins,
+        )
+
+    def registered_tools(self) -> dict[str, bool]:
+        """已注册的工具（插件、MCP）：{工具名: 是否启用}。内置网页搜索的工具每次请求才加入，不在这里。"""
+        try:
+            return {
+                t.name: bool(getattr(t, "active", True))
+                for t in self.plugin.context.get_llm_tool_manager().func_list
+            }
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def fixable(self, tools: list[str], registered: dict[str, bool]) -> list[str]:
+        """可以一键停用的工具：已注册、正在启用、不是 DeepDeep 自己的（它们有自己的开关）。"""
+        own = {*OWN_TOOLS, TAVILY_TOOL}
+        return [t for t in tools if registered.get(t) and t not in own]
+
+    def problems(
+        self, range_key: str = "24h"
+    ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+        """配置检查和健康检测，并按“忽略”记录标出已忽略的项。"""
+        setup = self.setup_data()
+        health = self.health_data(range_key)
+        registered = self.registered_tools()
+        current: dict[str, str] = {}
+        for it in setup["items"]:
+            if it["status"] in ("missing", "warn"):
+                current[f"setup:{it['key']}"] = it["status"]
+        for tool, h in health.items():
+            if h["verdict"] in ("broken", "degraded"):
+                current[f"health:{tool}"] = "bad"
+        self.ui.prune(current)
+        for it in setup["items"]:
+            key = f"setup:{it['key']}"
+            it["ignore_key"] = key
+            it["ignored"] = key in current and self.ui.is_ignored(key, current[key])
+            it["fixable_tools"] = self.fixable(it.get("tools", []), registered)
+        for tool, h in health.items():
+            key = f"health:{tool}"
+            h["ignore_key"] = key
+            h["ignored"] = key in current and self.ui.is_ignored(key, current[key])
+            h["fixable"] = bool(self.fixable([tool], registered))
+        active = [it for it in setup["items"] if not it["ignored"]]
+        setup["missing"] = sum(1 for it in active if it["status"] == "missing")
+        setup["warn"] = sum(1 for it in active if it["status"] == "warn")
+        setup["tool_status"] = {
+            t: s
+            for t, s in setup["tool_status"].items()
+            if any(
+                t in it.get("tools", [])
+                for it in active
+                if it["status"] in ("missing", "warn")
+            )
+        }
+        return setup, health
+
+    def handled_data(self) -> dict[str, Any]:
+        registered = self.registered_tools()
+        return {
+            "disabled": [
+                {
+                    "tool": tool,
+                    "ts": info.get("ts"),
+                    "reason": info.get("reason", ""),
+                    "still_disabled": registered.get(tool) is False,
+                }
+                for tool, info in sorted(self.ui.disabled_tools.items())
+            ],
+        }
+
+    def overview_data(self, range_key: str = "24h") -> dict[str, Any]:
+        names = self.search_tool_names()
+        setup, health = self.problems(range_key)
+        return {
+            "range": range_key,
+            "own_enabled": self.plugin.router.own_enabled,
+            "lanes": self.plugin.router.lanes(names),
+            "health": health,
+            "backends": {
+                n: {"label": b.label, "kind": b.kind, "region": b.region}
+                for n in names
+                if (b := connectivity.match_backend(n)) is not None
+            },
+            "logging_enabled": self.plugin.recorder.enabled,
+            "setup": setup,
+            "handled": self.handled_data(),
+        }
+
+    async def overview(self):
+        range_key = request.query.get("range") or "24h"
+        if range_key not in RANGE_HOURS:
+            range_key = "24h"
+        return json_response(await asyncio.to_thread(self.overview_data, range_key))
+
+    def searxng_url(self) -> str | None:
+        try:
+            return connectivity.find_searxng_url(self.config_dir())
+        except Exception as exc:  # noqa: BLE001 - 读不到只是不显示地址
+            logger.debug(f"[deepdeep] 查找 SearXNG 地址失败: {exc}")
+            return None
+
+    def network_data(self) -> dict[str, Any]:
+        url = self.searxng_url()
+        return {
+            "groups": connectivity.describe(self.search_tool_names(), url),
+            "searxng_url": url,
+            "last_check": self.last_network_check,
+        }
+
+    async def network(self):
+        return json_response(await asyncio.to_thread(self.network_data))
+
+    async def network_check(self):
+        data = await asyncio.to_thread(self.network_data)
+        result = await connectivity.run_check(data["groups"], data["searxng_url"])
+        self.last_network_check = result
+        logger.info(
+            "[deepdeep] 连通性检测：国内网站 "
+            f"{'可访问' if result['server_domestic_ok'] else '不可访问'}，国外网站 "
+            f"{'可访问' if result['server_foreign_ok'] else '不可访问'}"
+        )
+        return json_response({**data, "last_check": result})
 
     def diagnostics_data(self) -> dict[str, Any]:
         """反馈问题时附上的诊断信息：版本、配置摘要、状态、最近失败。不含 API Key。"""
@@ -285,6 +527,15 @@ class WebApi:
             "circuit": status["circuit"],
             "today": status["today"],
             "search_tools": tools,
+            "search_tool_health": {
+                k: {"verdict": v["verdict"], "reason": v["reason"]}
+                for k, v in self.health_data("7d").items()
+            },
+            "network_check": self.last_network_check,
+            "setup": [
+                {k: it.get(k) for k in ("key", "status", "detail", "tools")}
+                for it in self.setup_data()["items"]
+            ],
             "recent_problems": recent_problems,
             "call_log": self.plugin.call_log.summary(),
         }
@@ -414,6 +665,97 @@ class WebApi:
         self.plugin.apply_config()
         logger.info(f"[deepdeep] WebUI 更新设置: {sorted(clean)}")
         return json_response(self.status_data())
+
+    async def _body(self) -> dict[str, Any]:
+        body = await request.json(default={})
+        return body if isinstance(body, dict) else {}
+
+    async def ignore(self):
+        key = str((await self._body()).get("key") or "")
+        setup, health = await asyncio.to_thread(self.problems)
+        fps = {
+            it["ignore_key"]: it["status"]
+            for it in setup["items"]
+            if it["status"] in ("missing", "warn")
+        }
+        fps.update(
+            {
+                h["ignore_key"]: "bad"
+                for h in health.values()
+                if h["verdict"] in ("broken", "degraded")
+            }
+        )
+        if key not in fps:
+            return error_response("这条提醒已经不存在了，刷新看看", status_code=400)
+        self.ui.ignore(key, fps[key])
+        logger.info(f"[deepdeep] WebUI 忽略提醒: {key}")
+        return json_response(await asyncio.to_thread(self.overview_data))
+
+    async def unignore(self):
+        key = str((await self._body()).get("key") or "")
+        self.ui.unignore(key)
+        return json_response(await asyncio.to_thread(self.overview_data))
+
+    @staticmethod
+    def _tool_list(body: dict[str, Any]) -> list[str]:
+        tools = body.get("tools")
+        if not isinstance(tools, list):
+            return []
+        return [t for t in tools if isinstance(t, str) and t][:50]
+
+    async def _set_tool_active(self, name: str, active: bool) -> None:
+        ctx = self.plugin.context
+        method = "activate_llm_tool" if active else "deactivate_llm_tool"
+        fn = getattr(ctx, f"{method}_async", None)
+        if fn is not None:
+            ok = await fn(name)
+        else:
+            ok = getattr(ctx, method)(name)
+        if ok is False:
+            raise ValueError("找不到这个工具")
+
+    async def disable_tools(self):
+        body = await self._body()
+        tools = self._tool_list(body)
+        allowed = set(self.fixable(tools, self.registered_tools()))
+        reason = str(body.get("reason") or "")[:200]
+        done, failed = [], {}
+        for name in tools:
+            if name not in allowed:
+                failed[name] = "不能从这里停用（不是已注册的插件工具，或已经停用）"
+                continue
+            try:
+                await self._set_tool_active(name, False)
+            except Exception as exc:  # noqa: BLE001 - 逐个报告，不影响其他工具
+                failed[name] = str(exc)
+                continue
+            self.ui.mark_disabled(name, reason)
+            done.append(name)
+        if done:
+            logger.info(f"[deepdeep] WebUI 停用了工具: {done}（{reason}）")
+        data = await asyncio.to_thread(self.overview_data)
+        return json_response({**data, "done": done, "failed": failed})
+
+    async def enable_tools(self):
+        tools = self._tool_list(await self._body())
+        registered = self.registered_tools()
+        done, failed = [], {}
+        for name in tools:
+            if name not in registered:
+                self.ui.mark_enabled(name)
+                failed[name] = "这个工具已经不存在（插件可能被卸载了），已从列表移除"
+                continue
+            try:
+                await self._set_tool_active(name, True)
+            except Exception as exc:  # noqa: BLE001
+                failed[name] = str(exc)
+                continue
+            self.ui.mark_enabled(name)
+            done.append(name)
+        if done:
+            logger.info(f"[deepdeep] WebUI 重新启用了工具: {done}")
+        data = await asyncio.to_thread(self.overview_data)
+        return json_response({**data, "done": done, "failed": failed})
 
     async def test(self):
         return json_response(await self.plugin.run_connectivity_test())

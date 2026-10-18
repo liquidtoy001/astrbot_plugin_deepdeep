@@ -51,17 +51,27 @@ https://github.com/liquidtoy001/astrbot_plugin_deepdeep
 | `*image*` | 找图片 |
 | `*video*` | 找视频（B 站、YouTube 等视频平台） |
 | `*music*` / `*map*` | 找音乐 / 地点和地图 |
-| `*academic*` / `*paper*` | 学术论文和期刊 / arXiv 等论文 |
+| `*finance*` | 股票、汇率等财经行情 |
+| `*academic*`、`*scholar*` / `*paper*` | 学术论文和期刊 / arXiv 等论文 |
 | `*github*`、`search_repositories`、`search_code`、`search_issues`、`search_pull_requests` | GitHub 仓库、代码、Issue、PR |
 | `*aur*` / `*code-context*` / `*webshot*` | AUR 软件包 / 编程文档 / 网页截图 |
 | `astr_kb_search` | 本地知识库 |
+
+通用搜索还可以**按问题类型分工**（「按问题类型分工」，每条写成“问题类型 = 工具名规则, …”）：本次请求里第一个存在的工具作为这类问题的首选，其余问题仍先用 DeepDeep。默认一条：
+
+| 问题类型 | 首选 |
+|---|---|
+| 编程、软件版本、安全漏洞、官方文档等技术问题 | `deepdeep_tavily_search`（DeepDeep 自带）或 `web_search_tavily`（AstrBot 内置） |
+
+这条来自 2026-10 的多引擎对比：DeepSeek 平均 7.6 分（满分 10）最高，但技术题只有 6.8；Tavily 技术题 8.8 分，不过不带发布日期、时效题较弱。分工后模型 9/9 次把技术题交给 Tavily，其余仍走 DeepDeep，结果质量平均从 7.2 提高到 8.4。
 
 每次请求时，DeepDeep 在系统提示末尾加一小段**搜索工具分工**，只列出本次实际可用的工具，例如：
 
 ```text
 【搜索工具分工】先选最对口的工具，结果不理想时再换：
-- 通用网页搜索（新闻、事实、中文资料等）：优先 deepdeep_web_search；没有结果或结果不理想时再用 searxng_web_search_general、web_search_tavily、searxng_web_search_news 等 8 个
-- 读取网页全文：优先 deepdeep_web_fetch；读取失败时再用 searxng_web_fetch_url、tavily_extract_web_page
+- 新闻时事、中文资料、海外新闻、比赛和最新动态：优先 deepdeep_web_search；没有结果或结果不理想时再用 deepdeep_tavily_search、web_search_serpapi、searxng_web_search_general 等 10 个
+- 编程、软件版本、安全漏洞、官方文档等技术问题：优先 deepdeep_tavily_search；不理想时再用 deepdeep_web_search
+- 读取网页全文：优先 deepdeep_web_fetch；读取失败时再用 searxng_web_fetch_url
 - 找图片：searxng_web_search_images
 - 找视频（B 站、YouTube 等视频平台）：searxng_web_search_videos
 - GitHub 上的仓库、代码、Issue 和 PR：search_code、search_issues、search_pull_requests 等 5 个
@@ -97,6 +107,8 @@ https://github.com/liquidtoy001/astrbot_plugin_deepdeep
 
 ## 路由与降级
 
+不想用 DeepDeep 自带的 DeepSeek 搜索（比如改用 AstrBot 内置的 DeepSeek 搜索）时，关掉设置里的「启用 DeepDeep 自带的搜索和抓取」即可：每次请求都会把 `deepdeep_web_search` / `deepdeep_web_fetch` 拿掉，不改 AstrBot 的工具开关，分工说明、调用日志、健康检测照常工作，分工说明里的首选换成其他通用搜索。
+
 通用搜索按**路由模式**决定由谁负责：
 
 | 模式 | DeepSeek 可用时 | DeepSeek 故障时 | 超出费用上限时 |
@@ -124,7 +136,7 @@ https://github.com/liquidtoy001/astrbot_plugin_deepdeep
 
 | 来源 | 搜索工具 | 抓取工具 |
 |---|---|---|
-| AstrBot 内置网页搜索 | `web_search_tavily`、`web_search_bocha`、`web_search_brave`、`web_search_firecrawl`、`web_search_baidu`、`web_search_exa`、`web_search_anysearch`、`web_search_deepseek`¹ | `tavily_extract_web_page`、`firecrawl_extract_web_page`、`exa_get_contents`、`deepseek_fetch_web_page`¹ |
+| AstrBot 内置网页搜索 | `web_search_tavily`、`web_search_bocha`、`web_search_brave`、`web_search_firecrawl`、`web_search_baidu`、`web_search_exa`、`web_search_anysearch`、`web_search_serpapi`、`web_search_deepseek`¹（SerpApi 的图片、学术、财经工具为专用搜索） | `tavily_extract_web_page`、`firecrawl_extract_web_page`、`exa_get_contents`、`deepseek_fetch_web_page`¹ |
 | [web_searcher_pro](https://github.com/zouyonghe/astrbot_plugin_web_searcher_pro)（SearXNG） | `searxng_web_search_*`（图片、视频、音乐、地图、学术为专用搜索） | `searxng_web_fetch_url` |
 | [kimi_web_search](https://github.com/Tsukumi233/astrbot_plugin_kimi_web_search) | `kimi_web_search` | `kimi_web_fetch` |
 | [grok_web_search](https://github.com/piexian/astrbot_plugin_grok_web_search) / grok_suite | `grok_web_search` | `grok_web_fetch` |
@@ -144,6 +156,7 @@ https://github.com/liquidtoy001/astrbot_plugin_deepdeep
 |---|---|
 | `deepdeep_web_search(query, count)` | 通过 [DeepSeek Search API](https://api-docs.deepseek.com/zh-cn/guides/search) 联网搜索。每条结果带长摘要、发布日期、相关度和权威度；支持 `site:`、`-site:`、`"精确短语"`、`lang:zh,en`、`after:2026-01-01`、`before:2026-06` 等语法 |
 | `deepdeep_web_fetch(url)` | 通过 DeepSeek Fetch API 读取网页全文（Markdown） |
+| `deepdeep_tavily_search(query, count)` | 通过 Tavily 搜索，负责技术类问题，也是 DeepSeek 的第一备用。Key 默认复用 AstrBot「网页搜索」里的 Tavily Key（内置网页搜索选了别家也能用）；没有 Key、或内置网页搜索本身就是 Tavily 时自动不提供。Tavily 免费额度每月 1000 次 |
 
 工具结果第一行是统一的状态行，带 6 位请求 ID，可与日志、面板对照：
 
@@ -153,17 +166,24 @@ https://github.com/liquidtoy001/astrbot_plugin_deepdeep
 [DeepSeek 抓取 #0a0b0c] 未调用 · 已达到今日费用上限 ¥0.500
 ```
 
-问“最新、最近”或用 `after:`/`before:` 限定时间时，不按相关度过滤结果（新内容的分数通常偏低），并提醒模型结果按相关度而不是时间排序。
+每次向 DeepSeek 要至少 10 条结果（按次计费，结果多少不影响费用），给模型看的仍是 `count` 条左右：
+
+- 达到最低相关度的结果不足 3 条时，用排在后面的结果补足，并标明“第 N 条起相关度较低”，免得模型只看到一两条就认定没查到
+- 问“最新、最近”或用 `after:`/`before:` 限定时间时，不按相关度过滤（新内容的分数通常偏低），提醒模型结果按相关度而不是时间排序，“本次最新一条发布于”按全部结果计算，并把日期更新但相关度靠后的结果（最多 2 条）附在后面
 
 ## 插件面板
 
-在 AstrBot WebUI 的插件页点开本插件，进入「DeepDeep 面板」：
+在 AstrBot WebUI 的插件页点开本插件，进入「DeepDeep 面板」（顶部导航栏可以直接跳到各区块）：
 
 - **状态**：正常 / 已降级及原因、Key 来源、测试连接、解除熔断
+- **配置检查**：DeepDeep 的 DeepSeek / Tavily Key、AstrBot 内置网页搜索当前提供商的 Key、其他搜索插件的 API Key 和 SearXNG 地址有没有填；缺少配置时写明去哪里补（只看“填了没有”，不读取 Key 的内容）
+- **处理提醒**：每条提醒可以「忽略」，插件和 MCP 工具还可以一键「停用」（调用 AstrBot 的工具开关，点两次确认）；处理过的收进「已处理」，可随时重新启用或恢复提醒
+- **主力搜索工具**：通用搜索、网页读取的首选和备用工具，各专用搜索的分工（与告诉模型的分工说明一致），每个工具带健康状态；近 24 小时表现异常的工具会在这里提示
 - **费用**：今日 / 本月费用和上限进度（计费币种，并按汇率换算另一种币种）、近 30 天 DeepSeek 计费次数
 - **各搜索工具用量**：近 24 小时 / 7 天 / 30 天每个搜索工具的调用次数、成功率、失败、拦截、平均耗时
-- **设置**：路由模式、计费币种、费用上限、熔断、通用搜索规则、分工规则、调用日志选项，保存即生效（与 AstrBot 插件配置页是同一份配置）
-- **工具路由预览**：每个工具的类型（DeepDeep / 备用 / 专用及其擅长）以及在 DeepSeek 正常、故障、超出预算时是否可见
+- **网络连通性**：每个搜索工具走云端 API 还是自建服务（内网）、服务商在国内还是国外、能搜到国内 / 国外哪些网站；一键检测（见下文）
+- **设置**：常用的自带搜索开关、路由模式、计费币种、费用上限放在外面，汇率、熔断、匹配规则、分工规则、调用日志收在「高级设置」里；修改后自动保存、立即生效（与 AstrBot 插件配置页是同一份配置）
+- **工具路由预览**：每个工具的类型（DeepDeep / 备用 / 专用及其擅长）以及在 DeepSeek 正常、故障、超出预算时是否可见；默认只显示前 6 个搜索工具
 - **调用日志**：按时间、来源、工具、结果、关键词或请求 ID 筛选，分页，展开详情，导出 JSON Lines，清空
 - **诊断信息**：一键生成，反馈问题时附上（不含 API Key）
 
@@ -181,21 +201,48 @@ DeepDeep 通过 AstrBot 的工具调用钩子（`on_using_llm_tool` / `on_llm_to
 - 只记录本插件已启用的会话里的调用
 - DeepDeep 的调用同时写入 AstrBot 官方「追踪」（Trace）
 
+## 搜索工具健康检测
+
+有的搜索工具会“看起来能用、其实已经失效”，比如自建 SearXNG 的服务器 IP 被 DuckDuckGo、Brave 等拦截后，只剩一两个引擎返回和问题毫无关系的结果。DeepDeep 从调用日志判断每个搜索工具近 24 小时的健康状况：
+
+| 算作有问题 | 判断方式 |
+|---|---|
+| 失败 | 工具报错，或返回的只是一小段错误信息（被拦截、验证码、限流、超时等） |
+| 空结果 | 没有返回内容，或明确说“没有找到” |
+| 结果不相关 | 结果里几乎找不到搜索词（开头和 JSON 里回显的搜索词不算） |
+
+至少 3 次调用才下结论：七成以上有问题为「基本失效」，三成半以上或最近连续 3 次有问题为「不稳定」。相关度在内存里计算，数据库只保存分数，不保存其他工具的结果内容。
+
+**只做提示**：显示在面板顶部、「各搜索工具用量」和 `/deepdeep stats` 里，不会自动隐藏工具或改动分工说明（改动会让提示词缓存失效）。需要时请在 AstrBot 里关掉失效的工具。
+
+## 网络连通性
+
+搜索工具分两种，网络问题的表现完全不同：
+
+- **云端 API**（DeepSeek、SerpApi、Tavily、博查……）：搜索在服务商的服务器上完成，你的服务器只要连得上它的接口；能搜到国内还是国外网站取决于服务商。DeepDeep 的网页抓取也由 DeepSeek 的服务器去抓，服务器自己打不开的网站也能读
+- **自建服务（内网）**（如 `http://searxng:8080`）：请求从你的服务器发往各搜索引擎，服务器访问不了、或者服务器 IP 被拦截的引擎就没有结果；直接抓网页的工具同理
+
+面板里列出每个后端的运行方式、接口地址、服务商所在地和国内 / 国外网站覆盖。点「检测连通性」会从服务器打开几个国内外网站首页、访问各接口地址，并真实查询一次 SearXNG（地址从其他插件的配置里自动读取），列出能用和被拦截的引擎。检测不调用任何计费接口。
+
 ## 配置
 
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
 | DeepSeek API Key | 空 | 留空时复用 DeepSeek 官方提供商的 Key |
+| 启用 DeepDeep 自带的搜索和抓取 | 开 | 关闭后由其他搜索工具负责，见「路由与降级」 |
+| 启用 DeepDeep 自带的 Tavily 搜索 | 开 | 没有 Key 或内置网页搜索就是 Tavily 时自动不提供 |
+| Tavily API Key | 空 | 留空时复用 AstrBot「网页搜索」里的 Tavily Key |
 | 路由模式 | 只引导 | 见「路由与降级」 |
 | 计费币种 | 人民币 | 中国站每千次 ¥5，国际站每千次 $0.75，按你的账户选择 |
 | 每日 / 每月费用上限 | 0 / 30 | 按计费币种计算，0 表示不限制；按服务器本地日期统计 |
 | 汇率 | 7.1 | 1 美元兑人民币，只用于换算显示 |
 | 可互相替代的通用搜索 | 见「兼容性」 | 工具名规则，支持 `*` 通配 |
 | 搜索分工规则 | 见「搜索分工」 | 每条“规则 = 擅长什么” |
+| 按问题类型分工 | 技术问题 → Tavily | 每条“问题类型 = 工具名规则, …” |
 | 向模型说明搜索工具分工 | 开 | |
 | 熔断阈值 / 冷却 | 3 次 / 300 秒 | 余额不足或 Key 无效时立即暂停 30 分钟 |
-| 默认结果数 / 上限 | 5 / 10 | DeepSeek 按请求次数计费，与结果数无关 |
-| 最低相关度 | 0.5 | |
+| 默认结果数 / 上限 | 5 / 10 | DeepSeek 按请求次数计费，与结果数无关；插件每次向 DeepSeek 要至少 10 条用于补足和找最新结果 |
+| 最低相关度 | 0.5 | 达标的不足 3 条时用后面的结果补足 |
 | 搜索 / 抓取字数上限 | 6000 / 8000 | |
 | 附带用户原始问题 | 开 | 把用户消息前 128 字作为 `ori_question` 发给 DeepSeek |
 | 缓存时长 | 600 秒 | 0 为关闭 |
@@ -209,7 +256,7 @@ DeepDeep 通过 AstrBot 的工具调用钩子（`on_using_llm_tool` / `on_llm_to
 
 | 命令 | 作用 |
 |---|---|
-| `/deepdeep stats` | 今日 DeepSeek 用量、今日 / 本月费用、当前状态、近 24 小时各搜索工具调用次数 |
+| `/deepdeep stats` | 今日 DeepSeek 用量、今日 / 本月费用、当前状态、近 24 小时各搜索工具调用次数，以及可能失效、配置不完整的搜索工具 |
 | `/deepdeep test` | 测试 DeepSeek Key 和网络（计费 1 次） |
 | `/deepdeep reset` | 解除熔断 |
 

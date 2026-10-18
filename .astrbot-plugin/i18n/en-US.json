@@ -2,7 +2,7 @@
   "metadata": {
     "display_name": "DeepDeep",
     "short_desc": "Search manager: division of labor, fallback, spending caps and call log",
-    "desc": "Lets DeepSeek search, AstrBot's built-in web search and community search plugins work together by specialty: general search plus specialists for images, videos, papers, GitHub and more. DeepSeek first with automatic fallback on outages or spending caps, per-tool usage stats, a call log for all tools and a dashboard."
+    "desc": "Lets DeepSeek search, Tavily, AstrBot's built-in web search and community search plugins work together by specialty: general search, technical questions and specialists for images, videos, papers, GitHub and more. DeepSeek first with automatic fallback on outages or spending caps, search tool health checks, setup checks and network notes, per-tool usage stats, a call log for all tools and a dashboard."
   },
   "config": {
     "api_key": {

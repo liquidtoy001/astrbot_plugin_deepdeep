@@ -20,6 +20,17 @@
         </div>
       </header>
 
+      <nav class="navbar" id="navbar" aria-label="页面导航">
+        <a href="#sec-tools" data-target="sec-tools">主力工具</a>
+        <a href="#sec-cost" data-target="sec-cost">费用</a>
+        <a href="#sec-usage" data-target="sec-usage">工具用量</a>
+        <a href="#sec-network" data-target="sec-network">网络</a>
+        <a href="#sec-settings" data-target="sec-settings">设置</a>
+        <a href="#sec-routing" data-target="sec-routing">路由预览</a>
+        <a href="#sec-calls" data-target="sec-calls">调用日志</a>
+        <a href="#sec-diag" data-target="sec-diag">诊断</a>
+      </nav>
+
       <section class="banner" id="banner" role="status">
         <span class="dot" id="banner-dot"></span>
         <div>
@@ -30,7 +41,21 @@
 
       <div class="toast" id="toast" role="alert" hidden></div>
 
-      <section class="stats">
+      <section class="card" id="sec-tools">
+        <div class="card-head">
+          <h2>主力搜索工具</h2>
+          <span class="muted small">每类需求先用谁、不理想时换谁（与告诉模型的分工说明一致）· 健康状况按近 24 小时的调用判断，只做提示</span>
+        </div>
+        <div class="setup-box" id="setup-box" hidden></div>
+        <div class="health-alert" id="health-alert" hidden></div>
+        <div class="lanes" id="lanes"></div>
+        <details class="handled" id="handled" hidden>
+          <summary class="muted small" id="handled-summary">已处理</summary>
+          <div id="handled-body"></div>
+        </details>
+      </section>
+
+      <section class="stats" id="sec-cost">
         <article class="card stat">
           <div class="label">今日费用</div>
           <div class="value"><span id="today-cost">–</span><span class="cny" id="today-cost-cny"></span></div>
@@ -55,7 +80,7 @@
         </article>
       </section>
 
-      <section class="card">
+      <section class="card" id="sec-chart">
         <div class="card-head">
           <h2>近 30 天计费次数</h2>
           <div class="legend">
@@ -67,7 +92,7 @@
         <div class="muted small" id="chart-summary"></div>
       </section>
 
-      <section class="card">
+      <section class="card" id="sec-usage">
         <div class="card-head">
           <h2>各搜索工具用量</h2>
           <select id="stats-range" aria-label="统计范围" class="inline-select">
@@ -80,7 +105,7 @@
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>工具</th><th>来源</th><th>类型</th><th>调用</th><th>成功率</th><th>失败</th><th>拦截</th><th>平均耗时</th><th>最近一次</th></tr>
+              <tr><th>工具</th><th>来源</th><th>类型</th><th>健康</th><th>调用</th><th>成功率</th><th>失败</th><th>拦截</th><th>平均耗时</th><th>最近一次</th></tr>
             </thead>
             <tbody id="stats-body"></tbody>
           </table>
@@ -88,37 +113,62 @@
         <div class="muted small" id="stats-note"></div>
       </section>
 
-      <section class="card">
+      <section class="card" id="sec-network">
         <div class="card-head">
-          <h2>路由与费用</h2>
-          <span class="muted small" id="key-info"></span>
+          <h2>网络连通性</h2>
+          <button type="button" id="btn-net" class="btn ghost">检测连通性</button>
+        </div>
+        <p class="muted small intro">
+          <b>云端 API</b>：搜索在服务商的服务器上完成，你的服务器只要连得上它的接口，国内外网站能不能搜到取决于服务商。
+          <b>自建服务（内网）</b>：比如 SearXNG，请求从你的服务器发往各搜索引擎，服务器访问不了、或者服务器 IP 被拦截（验证码、限流）的引擎就没有结果。
+          检测只打开几个网站首页和接口地址、查一次 SearXNG，不调用计费接口。
+        </p>
+        <div class="net-summary" id="net-summary" hidden></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>后端</th><th>运行方式 / 接口</th><th>能搜到</th><th>实测</th><th>说明</th></tr>
+            </thead>
+            <tbody id="net-body"></tbody>
+          </table>
+        </div>
+        <div class="searxng-box" id="searxng-box" hidden></div>
+      </section>
+
+      <section class="card" id="sec-settings">
+        <div class="card-head">
+          <h2>设置</h2>
+          <span class="save-state small" id="save-state" role="status">修改后自动保存</span>
         </div>
         <form id="settings" class="settings" autocomplete="off">
-          <fieldset class="modes">
-            <legend>路由模式</legend>
-            <label class="mode">
-              <input type="radio" name="routing_mode" value="guide_only" />
-              <span><strong>只引导（推荐）</strong><em>不隐藏工具，用分工说明安排先后；工具列表不变，不影响提示词缓存</em></span>
-            </label>
-            <label class="mode">
-              <input type="radio" name="routing_mode" value="deepseek_first" />
-              <span><strong>DeepSeek 优先</strong><em>可用时隐藏同类工具，选择更集中；每次切换会让缓存失效一次</em></span>
-            </label>
-            <label class="mode">
-              <input type="radio" name="routing_mode" value="deepseek_only" />
-              <span><strong>只用 DeepSeek</strong><em>始终隐藏其他搜索工具，不降级</em></span>
-            </label>
-            <label class="mode">
-              <input type="radio" name="routing_mode" value="fallback_only" />
-              <span><strong>暂停 DeepSeek</strong><em>隐藏 DeepSeek 工具，只用其他搜索</em></span>
-            </label>
-            <label class="mode">
-              <input type="radio" name="routing_mode" value="coexist" />
-              <span><strong>不干预</strong><em>所有搜索工具并存，由模型自己选</em></span>
-            </label>
-          </fieldset>
+          <label class="switch-row">
+            <input type="checkbox" name="own_tools_enabled" />
+            <span>
+              <strong>启用 DeepDeep 自带的 DeepSeek 搜索和抓取</strong>
+              <em>关闭后不再向模型提供 deepdeep_web_search / deepdeep_web_fetch（只在每次请求里拿掉，不改 AstrBot 的工具开关），改由其他搜索工具负责；分工说明、调用日志和健康检测照常工作</em>
+            </span>
+          </label>
+          <label class="switch-row">
+            <input type="checkbox" name="tavily_enabled" />
+            <span>
+              <strong>启用 DeepDeep 自带的 Tavily 搜索</strong>
+              <em>提供 deepdeep_tavily_search，负责编程、软件版本、安全漏洞、官方文档等技术问题，也是 DeepSeek 的第一备用。Key 复用 AstrBot「网页搜索」里的 Tavily Key，内置网页搜索选了别家也能同时用</em>
+              <em id="tavily-info"></em>
+            </span>
+          </label>
 
-          <div class="grid2">
+          <div class="grid2 basic">
+            <label class="field">
+              <span>路由模式</span>
+              <select name="routing_mode">
+                <option value="guide_only">只引导（推荐）</option>
+                <option value="deepseek_first">DeepSeek 优先</option>
+                <option value="deepseek_only">只用 DeepSeek</option>
+                <option value="fallback_only">暂停 DeepSeek</option>
+                <option value="coexist">不干预</option>
+              </select>
+              <em id="mode-hint"></em>
+            </label>
             <label class="field">
               <span>计费币种</span>
               <select name="billing_currency">
@@ -137,66 +187,78 @@
               <input type="number" name="monthly_budget" min="0" step="0.1" />
               <em id="monthly-hint">按自然月统计，0 表示不限制</em>
             </label>
-            <label class="field">
-              <span>汇率（1 美元 = ? 元）</span>
-              <input type="number" name="exchange_rate" min="0" max="100" step="0.01" />
-              <em>只用于换算显示另一种币种，0 表示不显示</em>
-            </label>
-            <label class="field">
-              <span>熔断阈值（连续失败次数）</span>
-              <input type="number" name="circuit_threshold" min="1" max="50" step="1" />
-            </label>
-            <label class="field">
-              <span>熔断冷却（秒）</span>
-              <input type="number" name="circuit_cooldown_seconds" min="10" step="10" />
-            </label>
-            <label class="field">
-              <span>可互相替代的通用搜索（每行一个规则，支持 *）</span>
-              <textarea name="fallback_tool_patterns" rows="6" spellcheck="false"></textarea>
-            </label>
-            <label class="field">
-              <span>搜索分工规则（每行：工具名规则 = 擅长什么）</span>
-              <textarea name="specialist_rules" rows="8" spellcheck="false"></textarea>
-              <em>匹配的工具视为专用搜索：始终保留，并告诉模型它擅长什么</em>
-            </label>
           </div>
+          <div class="muted small" id="key-info"></div>
 
-          <label class="check">
-            <input type="checkbox" name="inject_search_guide" />
-            <span>每次请求向模型说明搜索工具分工（只列出本次可用的工具）</span>
-          </label>
+          <details class="advanced" id="advanced">
+            <summary><strong>高级设置</strong> <span class="muted small">汇率、熔断、工具匹配规则、分工规则、调用日志</span></summary>
+            <div class="advanced-body">
+              <div class="grid2">
+                <label class="field">
+                  <span>汇率（1 美元 = ? 元）</span>
+                  <input type="number" name="exchange_rate" min="0" max="100" step="0.01" />
+                  <em>只用于换算显示另一种币种，0 表示不显示</em>
+                </label>
+                <label class="field">
+                  <span>熔断阈值（连续失败次数）</span>
+                  <input type="number" name="circuit_threshold" min="1" max="50" step="1" />
+                </label>
+                <label class="field">
+                  <span>熔断冷却（秒）</span>
+                  <input type="number" name="circuit_cooldown_seconds" min="10" step="10" />
+                </label>
+              </div>
+              <div class="grid2">
+                <label class="field">
+                  <span>可互相替代的通用搜索（每行一个规则，支持 *）</span>
+                  <textarea name="fallback_tool_patterns" rows="6" spellcheck="false"></textarea>
+                </label>
+                <label class="field">
+                  <span>搜索分工规则（每行：工具名规则 = 擅长什么）</span>
+                  <textarea name="specialist_rules" rows="8" spellcheck="false"></textarea>
+                  <em>匹配的工具视为专用搜索：始终保留，并告诉模型它擅长什么。改完后下方“工具路由预览”会自动更新</em>
+                </label>
+              </div>
 
-          <fieldset class="checks">
-            <legend>调用日志</legend>
-            <label class="check">
-              <input type="checkbox" name="call_log_enabled" />
-              <span>记录所有工具的调用（保存在插件数据目录，重启不丢）</span>
-            </label>
-            <label class="check">
-              <input type="checkbox" name="record_queries" />
-              <span>记录 DeepSeek 的搜索词、链接和返回结果</span>
-            </label>
-            <label class="check">
-              <input type="checkbox" name="call_log_record_other_content" />
-              <span>记录其他工具的完整参数和结果（可能包含聊天内容，默认只记工具名、耗时和状态）</span>
-            </label>
-            <label class="field inline">
-              <span>保留天数</span>
-              <input type="number" name="call_log_retention_days" min="1" max="365" step="1" />
-            </label>
-          </fieldset>
+              <label class="field">
+                <span>按问题类型分工（每行：问题类型 = 工具名规则, 工具名规则）</span>
+                <textarea name="search_lane_rules" rows="3" spellcheck="false"></textarea>
+                <em>本次请求里第一个存在的工具作为这类问题的首选，写进分工说明；其余问题仍先用 DeepDeep。评测里“技术问题先用 Tavily”让结果质量从 7.2 提高到 8.4（满分 10）</em>
+              </label>
 
-          <div class="form-actions">
-            <button type="button" id="btn-preview" class="btn ghost">预览匹配</button>
-            <button type="submit" class="btn">保存设置</button>
-          </div>
+              <label class="check">
+                <input type="checkbox" name="inject_search_guide" />
+                <span>每次请求向模型说明搜索工具分工（只列出本次可用的工具）</span>
+              </label>
+
+              <fieldset class="checks">
+                <legend>调用日志</legend>
+                <label class="check">
+                  <input type="checkbox" name="call_log_enabled" />
+                  <span>记录所有工具的调用（保存在插件数据目录，重启不丢）</span>
+                </label>
+                <label class="check">
+                  <input type="checkbox" name="record_queries" />
+                  <span>记录 DeepSeek 的搜索词、链接和返回结果</span>
+                </label>
+                <label class="check">
+                  <input type="checkbox" name="call_log_record_other_content" />
+                  <span>记录其他工具的完整参数和结果（可能包含聊天内容，默认只记工具名、耗时和状态）</span>
+                </label>
+                <label class="field inline">
+                  <span>保留天数</span>
+                  <input type="number" name="call_log_retention_days" min="1" max="365" step="1" />
+                </label>
+              </fieldset>
+            </div>
+          </details>
         </form>
       </section>
 
-      <section class="card">
+      <section class="card" id="sec-routing">
         <div class="card-head">
           <h2>工具路由预览</h2>
-          <span class="muted small">当前已注册的工具，以及它们在不同情况下是否对模型可见。超出预算时，同样走 DeepSeek 计费的工具不会作为备用</span>
+          <span class="muted small" id="tools-note">当前已注册的工具，以及它们在不同情况下是否对模型可见。超出预算时，同样走 DeepSeek 计费的工具不会作为备用</span>
         </div>
         <div class="table-wrap">
           <table>
@@ -206,9 +268,10 @@
             <tbody id="tools-body"></tbody>
           </table>
         </div>
+        <button type="button" id="btn-tools-more" class="btn ghost more-btn" hidden></button>
       </section>
 
-      <section class="card">
+      <section class="card" id="sec-calls">
         <div class="card-head">
           <h2>调用日志</h2>
           <span class="muted small" id="calls-summary">所有工具的调用记录 · 点击一行查看详情</span>
@@ -254,7 +317,7 @@
         </div>
       </section>
 
-      <section class="card">
+      <section class="card" id="sec-diag">
         <div class="card-head">
           <h2>诊断信息</h2>
           <span class="muted small">反馈问题时附上：包含版本、配置摘要、当前状态和最近的失败记录，不含 API Key</span>

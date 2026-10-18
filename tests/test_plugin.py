@@ -217,6 +217,19 @@ class FakeContext:
     def get_llm_tool_manager(self):
         return self._tools
 
+    def _set_active(self, name, active):
+        tool = next((t for t in self._tools.func_list if t.name == name), None)
+        if tool is None:
+            return False
+        tool.active = active
+        return True
+
+    def deactivate_llm_tool(self, name):
+        return self._set_active(name, False)
+
+    def activate_llm_tool(self, name):
+        return self._set_active(name, True)
+
     def get_config(self, umo=None):
         return self._config
 
@@ -251,6 +264,8 @@ SEARCH_TOOLS = [
 def make_plugin(module, fake_api=None, providers=(), **config):
     # 大部分路由测试针对“隐藏同类工具”的模式；只引导模式另有专门的测试
     config.setdefault("routing_mode", "deepseek_first")
+    # 按类型分工另有专门的测试；这里关掉，免得 web_search_tavily 成为技术问题首选
+    config.setdefault("search_lane_rules", [])
     cfg = FakeConfig({"api_key": "sk-test-key-123456", **config})
     ctx = FakeContext(
         providers,
@@ -277,7 +292,11 @@ def api(plugin, route, method="GET"):
 
 
 def test_tool_docstrings_parse_like_astrbot(plugin_module):
-    assert set(registered_tools) == {"deepdeep_web_search", "deepdeep_web_fetch"}
+    assert set(registered_tools) == {
+        "deepdeep_web_search",
+        "deepdeep_web_fetch",
+        "deepdeep_tavily_search",
+    }
     for name, fn in registered_tools.items():
         doc = docstring_parser.parse(fn.__doc__)
         assert doc.description and len(doc.description) > 20, name
@@ -363,7 +382,9 @@ async def test_tools_end_to_end(plugin_module, fake_api, tmp_path):
     )
     page = await plugin.deepdeep_web_fetch(FakeEvent(), "https://example.com/1")
     assert "标题1" in text and "body" in page
-    assert fake_api.requests[0]["json"]["count"] == 3
+    # 按次计费，至少向 API 要 10 条，给模型看的仍按 count
+    assert fake_api.requests[0]["json"]["count"] == 10
+    assert "1 条结果" in text
     assert fake_api.requests[0]["json"]["ori_question"] == "沙沙帮我查下 DeepSeek"
 
     stats = [r async for r in plugin.deepdeep_command(FakeEvent(), "stats")]
@@ -721,10 +742,15 @@ async def test_guide_only_is_default_and_never_hides(plugin_module):
     req = types.SimpleNamespace(func_tool=toolset, system_prompt="")
     await plugin.route_search_tools(FakeEvent(), req)
     assert toolset.names() == SEARCH_TOOLS  # 一个都不藏
+    # 默认的按类型分工：技术问题先用 Tavily，其余先用 DeepDeep
     assert (
-        "通用网页搜索（新闻、事实、中文资料等）：优先 deepdeep_web_search；"
-        "没有结果或结果不理想时再用 searxng_web_search_general、web_search_tavily"
+        "新闻时事、中文资料、海外新闻、比赛和最新动态：优先 deepdeep_web_search；"
+        "没有结果或结果不理想时再用 web_search_tavily、searxng_web_search_general"
     ) in req.system_prompt
+    assert (
+        "编程、软件版本、安全漏洞、官方文档等技术问题：优先 web_search_tavily；不理想时再用 deepdeep_web_search"
+        in req.system_prompt
+    )
     assert (
         "读取网页全文：优先 deepdeep_web_fetch；读取失败时再用 searxng_web_fetch_url、tavily_extract_web_page"
         in req.system_prompt
@@ -750,12 +776,12 @@ async def test_guide_only_failure_suggests_alternatives(plugin_module, fake_api)
         event, types.SimpleNamespace(func_tool=toolset, system_prompt="")
     )
     text = await plugin.deepdeep_web_search(event, "q")
-    assert "请改用 searxng_web_search_general、web_search_tavily 继续完成任务" in text
+    assert "请改用 web_search_tavily、searxng_web_search_general 继续完成任务" in text
     assert toolset.names() == SEARCH_TOOLS  # 不改工具列表
     detail = plugin.service.activity.recent(1)[0]["detail"]
     assert detail["fallback"]["suggested_tools"] == [
-        "searxng_web_search_general",
         "web_search_tavily",
+        "searxng_web_search_general",
     ]
     await plugin.terminate()
 
@@ -794,7 +820,7 @@ async def test_empty_and_low_quality_results_suggest_other_tools(
     empty = await plugin.deepdeep_web_search(event, "冷门问题")
     low = await plugin.deepdeep_web_search(event, "模糊问题")
     good = await plugin.deepdeep_web_search(event, "清楚的问题")
-    hint = "如果结果不够好，可以改用 searxng_web_search_general、web_search_tavily 再搜一次"
+    hint = "如果结果不够好，可以改用 web_search_tavily、searxng_web_search_general 再搜一次"
     assert hint in empty and hint in low and hint not in good
     assert plugin.service.availability().ok  # 不算故障，不触发熔断
     await plugin.terminate()
@@ -812,4 +838,296 @@ async def test_hide_mode_soft_fallback_keeps_own_tools(plugin_module, fake_api):
     assert "已为本次对话启用" in text
     names = toolset.names()
     assert "deepdeep_web_search" in names and "web_search_tavily" in names
+    await plugin.terminate()
+
+
+# ---------- 关闭自带搜索、健康检测、连通性 ----------
+
+
+async def test_own_tools_switch_removes_them_per_request(plugin_module, fake_api):
+    plugin = make_plugin(
+        plugin_module, fake_api, routing_mode="guide_only", own_tools_enabled=False
+    )
+    toolset = FakeToolSet(SEARCH_TOOLS)
+    req = types.SimpleNamespace(func_tool=toolset, system_prompt="")
+    await plugin.route_search_tools(FakeEvent(), req)
+    assert "deepdeep_web_search" not in toolset.names()
+    assert "deepdeep_web_fetch" not in toolset.names()
+    assert "web_search_tavily" in toolset.names()
+    # 分工说明照常，首选换成其他通用搜索
+    assert (
+        "优先 web_search_tavily；没有结果或结果不理想时再用 searxng_web_search_general"
+        in req.system_prompt
+    )
+    assert "deepdeep" not in req.system_prompt
+    # 万一模型仍调用（比如请求没经过路由），返回说明而不发请求
+    text = await plugin.deepdeep_web_search(FakeEvent(), "q")
+    assert "已在插件设置中关闭" in text and not fake_api.requests
+    await plugin.terminate()
+
+
+async def test_own_tools_switch_saved_from_webui(plugin_module):
+    plugin = make_plugin(plugin_module)
+    CURRENT_REQUEST.body = {"own_tools_enabled": False}
+    status = await api(plugin, "settings", "POST")()
+    assert status["settings"]["own_tools_enabled"] is False
+    assert plugin.router.own_enabled is False
+    preview = {t["name"]: t for t in plugin.router.preview(SEARCH_TOOLS)}
+    assert not preview["deepdeep_web_search"]["visible_when_ok"]
+    assert preview["web_search_tavily"]["visible_when_ok"]
+    await plugin.terminate()
+
+
+async def test_overview_flags_broken_tools_without_changing_routing(plugin_module):
+    plugin = make_plugin(plugin_module, routing_mode="guide_only")
+    event = FakeEvent()
+    junk = types.SimpleNamespace(
+        content=[
+            types.SimpleNamespace(text="1. AliExpress robot arm\nContent: cheap " * 10)
+        ],
+        isError=False,
+    )
+    t = FakeTool("searxng_web_search_general")
+    for _ in range(4):
+        await plugin.record_tool_start(event, t, {"query": "Falcons CS2 latest match"})
+        await plugin.record_tool_end(event, t, {}, junk)
+    data = await api(plugin, "overview")()
+    h = data["health"]["searxng_web_search_general"]
+    assert h["verdict"] == "broken" and h["irrelevant"] == 4
+    lanes = {lane["key"]: lane for lane in data["lanes"]}
+    assert lanes["search"]["primary"] == "deepdeep_web_search"
+    assert lanes["search"]["backups"] == [
+        "web_search_tavily",
+        "searxng_web_search_general",
+    ]
+    assert data["backends"]["searxng_web_search_general"]["kind"] == "self_hosted"
+    # 只提示：分工说明里仍然列出它
+    toolset = FakeToolSet(SEARCH_TOOLS)
+    req = types.SimpleNamespace(func_tool=toolset, system_prompt="")
+    await plugin.route_search_tools(FakeEvent(), req)
+    assert "searxng_web_search_general" in req.system_prompt
+    report = ""
+    async for r in plugin.deepdeep_command(FakeEvent(), "stats"):
+        report = r
+    assert (
+        "可能有问题的搜索工具" in report
+        and "searxng_web_search_general（基本失效" in report
+    )
+    await plugin.terminate()
+
+
+async def test_network_endpoint_reads_searxng_url(plugin_module, tmp_path):
+    plugin = make_plugin(plugin_module)
+    config_dir = tmp_path.parent.parent / "config"
+    plugin.data_dir = config_dir.parent / "plugin_data" / "astrbot_plugin_deepdeep"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "astrbot_plugin_web_search_pro_config.json").write_text(
+        '{"searxng_api_url": "http://searxng:8080"}', encoding="utf-8"
+    )
+    data = await api(plugin, "network")()
+    groups = {g["key"]: g for g in data["groups"]}
+    assert data["searxng_url"] == "http://searxng:8080"
+    assert groups["searxng"]["intranet"] is True
+    assert groups["deepseek"]["endpoint"] == "https://api.deepseek.com"
+    assert groups["tavily"]["region"] == "foreign"
+    assert data["last_check"] is None
+    await plugin.terminate()
+
+
+# ---------- 自带 Tavily 搜索 ----------
+
+
+async def test_tavily_tool_reuses_builtin_key(plugin_module, fake_api):
+    plugin = make_plugin(
+        plugin_module, fake_api, routing_mode="guide_only", search_lane_rules=None
+    )
+    # 内置网页搜索选的是 SerpApi，但 Tavily Key 还在
+    plugin.context._config["provider_settings"].update(
+        websearch_provider="serpapi", websearch_tavily_key=["tvly-builtin"]
+    )
+    plugin.tavily.client.api_url = f"{fake_api.base_url}/search"
+    assert plugin.tavily_key_source() == (
+        ["tvly-builtin"],
+        "复用 AstrBot 网页搜索的 Tavily Key",
+    )
+    names = [n for n in SEARCH_TOOLS if "tavily" not in n] + ["deepdeep_tavily_search"]
+    toolset = FakeToolSet(names)
+    req = types.SimpleNamespace(func_tool=toolset, system_prompt="")
+    event = FakeEvent()
+    await plugin.route_search_tools(event, req)
+    assert "deepdeep_tavily_search" in toolset.names()
+    assert (
+        "技术问题：优先 deepdeep_tavily_search；不理想时再用 deepdeep_web_search"
+        in req.system_prompt
+    )
+    fake_api.tavily_queue.append(
+        (
+            200,
+            {
+                "results": [
+                    {
+                        "title": "PEP",
+                        "url": "https://peps.python.org/x",
+                        "content": "c",
+                        "score": 0.9,
+                    }
+                ]
+            },
+            {},
+        )
+    )
+    text = await plugin.deepdeep_tavily_search(event, "python 3.14", 2)
+    assert (
+        "成功 · 1 条结果" in text
+        and fake_api.requests[-1]["auth"] == "Bearer tvly-builtin"
+    )
+    # 失败时建议改用 DeepDeep
+    fake_api.tavily_queue.append((432, {"detail": "limit"}, {}))
+    text = await plugin.deepdeep_tavily_search(event, "python 3.15", 2)
+    assert "请改用 deepdeep_web_search" in text
+    status = await api(plugin, "status")()
+    assert status["tavily"]["usable"] and status["tavily"]["masked"]
+    await plugin.terminate()
+
+
+async def test_tavily_tool_removed_when_unusable(plugin_module):
+    # make_plugin 的内置网页搜索就是 Tavily：自带的 Tavily 工具不重复提供
+    plugin = make_plugin(
+        plugin_module, routing_mode="guide_only", search_lane_rules=None
+    )
+    plugin.context._config["provider_settings"]["websearch_tavily_key"] = ["tvly-x"]
+    toolset = FakeToolSet([*SEARCH_TOOLS, "deepdeep_tavily_search"])
+    req = types.SimpleNamespace(func_tool=toolset, system_prompt="")
+    await plugin.route_search_tools(FakeEvent(), req)
+    assert "deepdeep_tavily_search" not in toolset.names()
+    # 技术问题改由内置的 web_search_tavily 负责
+    assert "技术问题：优先 web_search_tavily" in req.system_prompt
+    # 关闭开关
+    CURRENT_REQUEST.body = {"tavily_enabled": False}
+    status = await api(plugin, "settings", "POST")()
+    assert status["tavily"]["usable"] is False and "关闭" in status["tavily"]["reason"]
+    text = await plugin.deepdeep_tavily_search(FakeEvent(), "q")
+    assert "暂不可用" in text
+    # 没有 Key
+    plugin.context._config["provider_settings"]["websearch_tavily_key"] = []
+    CURRENT_REQUEST.body = {"tavily_enabled": True}
+    status = await api(plugin, "settings", "POST")()
+    assert status["tavily"]["configured"] is False
+    await plugin.terminate()
+
+
+async def test_lane_rules_saved_from_webui(plugin_module):
+    plugin = make_plugin(plugin_module, routing_mode="guide_only")
+    CURRENT_REQUEST.body = {"search_lane_rules": ["技术问题 = web_search_tavily"]}
+    status = await api(plugin, "settings", "POST")()
+    assert status["settings"]["search_lane_rules"] == ["技术问题 = web_search_tavily"]
+    guide = plugin.router.guide(SEARCH_TOOLS)
+    assert (
+        "- 技术问题：优先 web_search_tavily；不理想时再用 deepdeep_web_search" in guide
+    )
+    await plugin.terminate()
+
+
+async def test_overview_setup_flags_plugin_without_key(plugin_module, tmp_path):
+    plugin = make_plugin(plugin_module, routing_mode="guide_only")
+    grok = FakeTool("grok_web_search")
+    grok.handler_module_path = "data.plugins.astrbot_plugin_grok_web_search.main"
+    plugin.context._tools.func_list.append(grok)
+    plugin.resolve_plugin = lambda module: (
+        "astrbot_plugin_grok_web_search" if "grok" in module else None
+    )
+    config_dir = tmp_path / "cfg" / "config"
+    config_dir.mkdir(parents=True)
+    plugin.data_dir = config_dir.parent / "plugin_data" / "astrbot_plugin_deepdeep"
+    (config_dir / "astrbot_plugin_grok_web_search_config.json").write_text(
+        '{"api_key": ""}', encoding="utf-8"
+    )
+    # 内置网页搜索选了 Tavily 但没填 Key
+    data = await api(plugin, "overview")()
+    items = {it["key"]: it for it in data["setup"]["items"]}
+    assert items["plugin:astrbot_plugin_grok_web_search"]["status"] == "missing"
+    assert (
+        items["builtin"]["status"] == "missing"
+        and "Tavily" in items["builtin"]["detail"]
+    )
+    assert items["deepseek"]["status"] == "ok"
+    assert data["setup"]["tool_status"]["grok_web_search"] == "missing"
+    report = ""
+    async for r in plugin.deepdeep_command(FakeEvent(), "stats"):
+        report = r
+    assert "配置不完整" in report and "插件 grok_web_search" in report
+    diag = await api(plugin, "diagnostics")()
+    assert any(it["key"] == "builtin" for it in diag["setup"])
+    await plugin.terminate()
+
+
+async def test_ignore_and_disable_from_webui(plugin_module, tmp_path):
+    plugin = make_plugin(plugin_module, routing_mode="guide_only")
+    grok = FakeTool("grok_web_search")
+    grok.handler_module_path = "data.plugins.astrbot_plugin_grok_web_search.main"
+    plugin.context._tools.func_list.append(grok)
+    plugin.resolve_plugin = lambda m: (
+        "astrbot_plugin_grok_web_search" if "grok" in m else None
+    )
+    config_dir = tmp_path / "x" / "config"
+    config_dir.mkdir(parents=True)
+    plugin.data_dir = config_dir.parent / "plugin_data" / "astrbot_plugin_deepdeep"
+    (config_dir / "astrbot_plugin_grok_web_search_config.json").write_text(
+        '{"api_key": ""}', encoding="utf-8"
+    )
+    # SearXNG 综合搜索结果全部不相关 -> 基本失效
+    event = FakeEvent()
+    junk = types.SimpleNamespace(
+        content=[types.SimpleNamespace(text="AliExpress robot arm cheap " * 20)],
+        isError=False,
+    )
+    t = FakeTool("searxng_web_search_general")
+    for _ in range(4):
+        await plugin.record_tool_start(event, t, {"query": "Falcons CS2 latest match"})
+        await plugin.record_tool_end(event, t, {}, junk)
+
+    data = await api(plugin, "overview")()
+    grok_item = next(
+        it
+        for it in data["setup"]["items"]
+        if it["key"] == "plugin:astrbot_plugin_grok_web_search"
+    )
+    assert (
+        grok_item["fixable_tools"] == ["grok_web_search"] and not grok_item["ignored"]
+    )
+    builtin = next(it for it in data["setup"]["items"] if it["key"] == "builtin")
+    assert builtin["fixable_tools"] == []  # 内置网页搜索的工具不能从这里停用
+    sx = data["health"]["searxng_web_search_general"]
+    assert sx["verdict"] == "broken" and sx["fixable"] is True
+
+    # 忽略：不再计入，进“已处理”；持久化到 ui_state.json
+    CURRENT_REQUEST.body = {"key": "health:searxng_web_search_general"}
+    data = await api(plugin, "ignore", "POST")()
+    assert data["health"]["searxng_web_search_general"]["ignored"] is True
+    assert '"health:searxng_web_search_general": "bad"' in plugin.web.ui.path.read_text(
+        encoding="utf-8"
+    )
+    CURRENT_REQUEST.body = {"key": "setup:nope"}
+    resp = await api(plugin, "ignore", "POST")()
+    assert resp["status_code"] == 400
+    CURRENT_REQUEST.body = {"key": "health:searxng_web_search_general"}
+    data = await api(plugin, "unignore", "POST")()
+    assert data["health"]["searxng_web_search_general"]["ignored"] is False
+
+    # 停用：真的调用 AstrBot 的停用接口，并能重新启用；DeepDeep 自己的工具不能这样停用
+    CURRENT_REQUEST.body = {
+        "tools": ["grok_web_search", "deepdeep_web_search", "web_search_tavily"],
+        "reason": "没有 Key",
+    }
+    data = await api(plugin, "disable-tools", "POST")()
+    assert data["done"] == ["grok_web_search"] and grok.active is False
+    assert set(data["failed"]) == {"deepdeep_web_search", "web_search_tavily"}
+    assert data["handled"]["disabled"][0]["tool"] == "grok_web_search"
+    assert data["handled"]["disabled"][0]["still_disabled"] is True
+    # 停用后不再出现在配置检查的问题里
+    assert "grok_web_search" not in data["setup"]["tool_status"]
+    CURRENT_REQUEST.body = {"tools": ["grok_web_search"]}
+    data = await api(plugin, "enable-tools", "POST")()
+    assert data["done"] == ["grok_web_search"] and grok.active is True
+    assert data["handled"]["disabled"] == []
     await plugin.terminate()

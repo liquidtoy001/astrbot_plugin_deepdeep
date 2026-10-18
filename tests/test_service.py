@@ -156,14 +156,33 @@ def _results(*scores):
 
 
 def test_low_score_results_are_filtered():
-    text = format_search_results("q", _results(2.5, 0.3, 1.6), min_score=1.0)
-    assert "标题1" in text and "标题3" in text and "标题2" not in text
-    assert "共 2 条" in text
+    text = format_search_results(
+        "q", _results(2.5, 0.3, 1.6, 1.2, 0.2), count=5, min_score=1.0
+    )
+    assert "标题1" in text and "标题3" in text and "标题4" in text
+    assert "标题2" not in text and "标题5" not in text
+    assert "共 3 条" in text and "相关度较低" not in text
 
 
-def test_all_low_score_keeps_top_two_with_warning():
-    text = format_search_results("q", _results(0.5, 0.4, 0.3), min_score=1.0)
-    assert "标题1" in text and "标题2" in text and "标题3" not in text
+def test_few_relevant_results_are_padded_to_three():
+    # 复现：CVE 查询只有 1 条达到阈值，模型只看到 1 条
+    text = format_search_results(
+        "CVE-2024-3094", _results(2.5, 0.4, 0.3, 0.2), count=5, min_score=1.0
+    )
+    assert "共 3 条" in text and "标题3" in text and "标题4" not in text
+    assert "第 2 条起相关度较低" in text and "相关度都较低" not in text
+
+
+def test_padding_respects_small_count():
+    text = format_search_results("q", _results(2.5, 0.4, 0.3), count=1, min_score=1.0)
+    assert "共 1 条" in text and "标题2" not in text
+
+
+def test_all_low_score_keeps_top_three_with_warning():
+    text = format_search_results(
+        "q", _results(0.5, 0.4, 0.3, 0.2), count=5, min_score=1.0
+    )
+    assert "标题3" in text and "标题4" not in text
     assert "相关度都较低" in text
 
 

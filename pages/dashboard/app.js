@@ -19,6 +19,19 @@ const MODE_TEXT = {
   fallback_only: "暂停 DeepSeek",
   coexist: "不干预",
 };
+const MODE_HINTS = {
+  guide_only: "不隐藏任何工具，只在分工说明里写清先用谁、什么情况再换；工具列表不变，不影响提示词缓存",
+  deepseek_first: "DeepSeek 可用时隐藏同类工具，选择更集中；每次切换会让提示词缓存失效一次",
+  deepseek_only: "始终隐藏其他通用搜索工具，DeepSeek 不可用时也不降级",
+  fallback_only: "隐藏 DeepDeep 的工具，只用其他搜索（与关闭上面的开关效果相同）",
+  coexist: "所有搜索工具并存，由模型自己选",
+};
+const VERDICT = {
+  broken: ["基本失效", "bad"],
+  degraded: ["不稳定", "warn"],
+  ok: ["正常", "ok"],
+  unknown: ["数据不足", ""],
+};
 const OUTCOME = {
   billable: ["成功", "ok"],
   empty: ["无结果", "warn"],
@@ -104,7 +117,11 @@ function renderStatus(s) {
   let level = "ok";
   let title = "DeepSeek 搜索正常";
   let detail = `路由模式：${MODE_TEXT[mode] || mode}`;
-  if (mode === "fallback_only") {
+  if (!s.settings.own_tools_enabled) {
+    level = "warn";
+    title = "DeepDeep 自带搜索已关闭，由其他搜索工具负责";
+    detail = "分工说明、调用日志和健康检测照常工作。可在下方“设置”里重新开启。";
+  } else if (mode === "fallback_only") {
     level = "warn";
     title = "已手动暂停 DeepSeek，正在使用其他搜索工具";
   } else if (!s.available) {
@@ -143,7 +160,15 @@ function renderStatus(s) {
   }
 
   const k = s.key;
-  $("key-info").textContent = k.configured ? `Key：${k.masked}（${k.source}）` : "未找到 API Key";
+  $("key-info").textContent = k.configured ? `DeepSeek Key：${k.masked}（${k.source}）` : "未找到 DeepSeek API Key";
+  const tv = s.tavily;
+  if (tv) {
+    $("tavily-info").textContent = !tv.configured
+      ? "状态：没有找到 Tavily Key（在 AstrBot「配置 → 网页搜索」里填写，或在插件配置里单独填写）"
+      : tv.usable
+        ? `状态：可用 · Key ${tv.masked}（${tv.source}）`
+        : `状态：不提供 · ${tv.reason}`;
+  }
 
   if (!formDirty) fillForm(s.settings);
   // 汇率可能刚加载或刚修改，图表里的人民币金额跟着刷新
@@ -151,9 +176,11 @@ function renderStatus(s) {
 }
 
 function fillForm(st) {
-  for (const input of form.querySelectorAll('input[name="routing_mode"]')) {
-    input.checked = input.value === st.routing_mode;
-  }
+  form.own_tools_enabled.checked = st.own_tools_enabled;
+  form.tavily_enabled.checked = st.tavily_enabled;
+  form.search_lane_rules.value = (st.search_lane_rules || []).join("\n");
+  form.routing_mode.value = st.routing_mode;
+  updateModeHint();
   form.billing_currency.value = st.billing_currency;
   form.daily_budget.value = st.daily_budget;
   form.monthly_budget.value = st.monthly_budget;
@@ -168,6 +195,10 @@ function fillForm(st) {
   form.call_log_enabled.checked = st.call_log_enabled;
   form.call_log_record_other_content.checked = st.call_log_record_other_content;
   form.call_log_retention_days.value = st.call_log_retention_days;
+}
+
+function updateModeHint() {
+  $("mode-hint").textContent = MODE_HINTS[form.routing_mode.value] || "";
 }
 
 // 输入费用上限时实时显示对应的人民币金额（按表单里的汇率）
@@ -189,7 +220,10 @@ const lines = (text) => text.split("\n").map((s) => s.trim()).filter(Boolean);
 
 function readForm() {
   return {
-    routing_mode: form.querySelector('input[name="routing_mode"]:checked')?.value,
+    own_tools_enabled: form.own_tools_enabled.checked,
+    tavily_enabled: form.tavily_enabled.checked,
+    search_lane_rules: lines(form.search_lane_rules.value),
+    routing_mode: form.routing_mode.value,
     billing_currency: form.billing_currency.value,
     daily_budget: Number(form.daily_budget.value || 0),
     monthly_budget: Number(form.monthly_budget.value || 0),
@@ -308,7 +342,12 @@ function visibility(visible) {
   return visible ? el("span", { class: "badge ok" }, "可见") : el("span", { class: "badge" }, "隐藏");
 }
 
+const TOOLS_COLLAPSED = 6;
+let toolsExpanded = false;
+let lastTools = [];
+
 function renderTools(tools) {
+  lastTools = tools;
   const body = $("tools-body");
   body.replaceChildren();
   if (!tools.length) {
@@ -321,11 +360,16 @@ function renderTools(tools) {
     specialist: ["专用搜索", ""],
     other: ["其他", ""],
   };
-  // 只列出和搜索路由有关的，其他工具折叠成一行统计
+  // 只列出和搜索路由有关的，其他工具折叠成一行统计；搜索工具多时先显示前几个
   const relevant = tools.filter((t) => t.role !== "other");
   const others = tools.length - relevant.length;
-  for (const t of relevant) {
-    const [label, cls] = roles[t.role];
+  const shown = toolsExpanded ? relevant : relevant.slice(0, TOOLS_COLLAPSED);
+  const more = $("btn-tools-more");
+  more.hidden = relevant.length <= TOOLS_COLLAPSED;
+  more.textContent = toolsExpanded ? "收起" : `展开其余 ${relevant.length - shown.length} 个搜索工具`;
+  for (const t of shown) {
+    let [label, cls] = roles[t.role];
+    if (t.role === "deepseek" && lastStatus && !lastStatus.settings.own_tools_enabled) [label, cls] = ["DeepDeep · 已关闭", ""];
     body.append(
       el(
         "tr",
@@ -739,11 +783,17 @@ const CATEGORY = {
   special: ["专用搜索", ""],
 };
 
-function renderSearchStats(data) {
+function healthBadge(h) {
+  if (!h) return el("span", { class: "muted small" }, "–");
+  const [label, cls] = VERDICT[h.verdict] || [h.verdict, ""];
+  return el("span", { class: `badge ${cls}`, title: h.reason }, label);
+}
+
+function renderSearchStats(data, health = lastOverview?.health || {}) {
   const body = $("stats-body");
   body.replaceChildren();
   if (!data.rows.length) {
-    body.append(emptyRow(9, data.logging_enabled ? "这段时间没有搜索类工具的调用" : "调用日志已关闭，无法统计"));
+    body.append(emptyRow(10, data.logging_enabled ? "这段时间没有搜索类工具的调用" : "调用日志已关闭，无法统计"));
   }
   for (const r of data.rows) {
     const [label, cls] = CATEGORY[r.category] || [r.category, ""];
@@ -756,6 +806,7 @@ function renderSearchStats(data) {
         el("td", {}, el("code", {}, r.tool)),
         el("td", {}, el("span", { class: "src" }, sourceLabel(r.source))),
         el("td", {}, el("span", { class: `badge ${cls}` }, r.same_backend ? `${label} · DeepSeek 计费` : label)),
+        el("td", {}, healthBadge(health[r.tool])),
         el("td", { class: "num" }, r.total),
         el("td", { class: "num" }, success),
         el("td", { class: "num" }, r.error || "–"),
@@ -765,13 +816,356 @@ function renderSearchStats(data) {
       ),
     );
   }
-  $("stats-note").textContent = `合计 ${data.total} 次 · 数据来自调用日志，只统计本插件已启用的会话；成功率不含被拦截的调用`;
+  $("stats-note").textContent = `合计 ${data.total} 次 · 数据来自调用日志，只统计本插件已启用的会话；成功率不含被拦截的调用。“健康”按近 24 小时判断：失败、空结果、结果与搜索词不相关都算有问题，鼠标悬停看原因`;
 }
 
 async function loadSearchStats() {
   renderSearchStats(await bridge.apiGet("search-stats", { range: $("stats-range").value }));
 }
 $("stats-range").addEventListener("change", () => loadSearchStats().catch((err) => toast(err.message, true)));
+
+// ---------- 主力搜索工具 ----------
+
+let lastOverview = null;
+const KIND_SHORT = { cloud: "云端", self_hosted: "自建", server: "服务器直连", local: "本机" };
+
+const SETUP = {
+  missing: ["缺少配置", "bad"],
+  warn: ["建议补上", "warn"],
+  info: ["说明", ""],
+  ok: ["已配置", "ok"],
+};
+
+function toolChip(name, data) {
+  const h = data.health[name];
+  let [, cls] = h ? VERDICT[h.verdict] || ["", ""] : ["", ""];
+  let title = h ? `${VERDICT[h.verdict][0]}：${h.reason}` : "近 24 小时没有调用";
+  if (h?.ignored) {
+    cls = "";
+    title = `（已忽略）${title}`;
+  }
+  const setup = data.setup?.tool_status?.[name];
+  if (setup) {
+    cls = SETUP[setup][1];
+    title = `${SETUP[setup][0]}（见上方“配置检查”）· ${title}`;
+  }
+  const chip = el("span", { class: `chip ${cls}`, title });
+  chip.append(el("i", { class: `hdot ${cls}` }), el("code", {}, name));
+  return chip;
+}
+
+function backendText(name, data) {
+  const b = data.backends[name];
+  return b ? `${b.label} · ${KIND_SHORT[b.kind] || b.kind}` : "";
+}
+
+// 面板在受限 iframe 里不能用 confirm()：需要确认的操作点两次
+function actionBtn(label, onClick, { confirmText = "", danger = false } = {}) {
+  const b = el("button", { type: "button", class: `btn ghost small-btn${danger ? " danger" : ""}` }, label);
+  let timer;
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (confirmText && !b.classList.contains("armed")) {
+      b.classList.add("armed");
+      b.textContent = confirmText;
+      timer = setTimeout(() => {
+        b.classList.remove("armed");
+        b.textContent = label;
+      }, 5000);
+      return;
+    }
+    clearTimeout(timer);
+    withBusy(b, onClick);
+  });
+  return b;
+}
+
+async function overviewAction(endpoint, body, okText) {
+  const data = await bridge.apiPost(endpoint, body);
+  renderLanes(data);
+  const failed = Object.entries(data.failed || {});
+  if (failed.length) toast(failed.map(([t, why]) => `${t}：${why}`).join("；"), true);
+  else toast(okText);
+  Promise.allSettled([loadTools(), loadSearchStats()]);
+}
+
+const STOP_CONFIRM = "再点一次确认停用（下一次对话的提示词缓存会失效一次）";
+
+function problemActions(key, tools, what) {
+  const box = el("span", { class: "row-actions" });
+  if (tools?.length) {
+    box.append(
+      actionBtn(
+        tools.length > 1 ? `停用这 ${tools.length} 个工具` : "停用这个工具",
+        () => overviewAction("disable-tools", { tools, reason: what }, `已停用 ${tools.join("、")}，可以在下方“已处理”里重新启用`),
+        { confirmText: STOP_CONFIRM, danger: true },
+      ),
+    );
+  }
+  box.append(actionBtn("忽略", () => overviewAction("ignore", { key }, "已忽略，问题变化时会重新提醒")));
+  return box;
+}
+
+function setupRow(it) {
+  const [label, cls] = SETUP[it.status] || [it.status, ""];
+  return el(
+    "li",
+    { class: `setup-item ${it.status}` },
+    el("span", { class: `badge ${cls}` }, label),
+    el(
+      "div",
+      {},
+      el("strong", {}, it.title),
+      el("span", { class: "muted small" }, ` ${it.detail || ""}`),
+      it.fix && it.status !== "ok" ? el("div", { class: "small fix" }, `怎么办：${it.fix}`) : null,
+      it.tools?.length ? el("div", { class: "muted small tools-line", title: it.tools.join("\n") }, it.tools.length > 4 ? `${it.tools.slice(0, 3).join("、")} 等 ${it.tools.length} 个工具` : it.tools.join("、")) : null,
+      (it.status === "missing" || it.status === "warn") && !it.ignored ? problemActions(it.ignore_key, it.fixable_tools, `${it.title}：${it.detail}`) : null,
+    ),
+  );
+}
+
+function renderSetup(setup) {
+  const box = $("setup-box");
+  box.replaceChildren();
+  if (!setup?.items?.length) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const problems = setup.items.filter((it) => (it.status === "missing" || it.status === "warn") && !it.ignored);
+  const rest = setup.items.filter((it) => !problems.includes(it) && !it.ignored);
+  box.className = `setup-box ${setup.missing ? "bad" : problems.length ? "warn" : "ok"}`;
+  if (problems.length) {
+    const parts = [];
+    if (setup.missing) parts.push(`${setup.missing} 项缺少配置`);
+    if (setup.warn) parts.push(`${setup.warn} 项建议补上`);
+    box.append(el("strong", {}, `配置检查：${parts.join("，")}`), el("ul", {}, ...problems.map(setupRow)));
+  }
+  if (rest.length) {
+    const details = el(
+      "details",
+      {},
+      el("summary", { class: problems.length ? "muted small" : "" }, problems.length ? `其余 ${rest.length} 项` : `✓ 配置检查：搜索工具都已配置好（${rest.length} 项）`),
+      el("ul", {}, ...rest.map(setupRow)),
+    );
+    box.append(details);
+  }
+}
+
+function renderLanes(data) {
+  lastOverview = data;
+  renderSetup(data.setup);
+  renderHandled(data);
+  const box = $("lanes");
+  box.replaceChildren();
+  if (!data.lanes.length) {
+    box.append(el("p", { class: "muted small" }, "没有读取到搜索类工具"));
+  }
+  // 通用搜索、读取网页：首选和备用分开写；专用搜索合成一张表
+  const main = data.lanes.filter((l) => !l.key.startsWith("special:"));
+  const special = data.lanes.filter((l) => l.key.startsWith("special:"));
+  for (const lane of main) {
+    const card = el("article", { class: "lane" });
+    card.append(el("div", { class: "lane-title" }, el("strong", {}, lane.title), el("span", { class: "muted small" }, lane.desc)));
+    card.append(
+      el("div", { class: "lane-row" }, el("span", { class: "lane-label" }, "首选"), el("div", {}, toolChip(lane.primary, data), el("div", { class: "muted small" }, backendText(lane.primary, data)))),
+    );
+    if (lane.backups.length) {
+      const list = el("div", { class: "chips" });
+      for (const name of lane.backups.slice(0, 5)) list.append(toolChip(name, data));
+      if (lane.backups.length > 5) list.append(el("span", { class: "muted small" }, `等 ${lane.backups.length} 个`));
+      card.append(el("div", { class: "lane-row" }, el("span", { class: "lane-label" }, "备用"), list));
+    }
+    box.append(card);
+  }
+  if (special.length) {
+    const card = el("article", { class: "lane lane-special" }, el("div", { class: "lane-title" }, el("strong", {}, "专用搜索"), el("span", { class: "muted small" }, "按需求选对口的工具，始终保留")));
+    const grid = el("div", { class: "spec-grid" });
+    for (const lane of special) {
+      const chips = el("div", { class: "chips" });
+      for (const name of [lane.primary, ...lane.backups].slice(0, 3)) chips.append(toolChip(name, data));
+      const extra = lane.backups.length + 1 - 3;
+      if (extra > 0) chips.append(el("span", { class: "muted small" }, `等 ${lane.backups.length + 1} 个`));
+      grid.append(el("div", { class: "spec-title" }, lane.title), chips);
+    }
+    card.append(grid);
+    box.append(card);
+  }
+  const flagged = Object.entries(data.health).filter(([, h]) => (h.verdict === "broken" || h.verdict === "degraded") && !h.ignored);
+  const alert = $("health-alert");
+  alert.hidden = !flagged.length;
+  alert.replaceChildren();
+  if (flagged.length) {
+    alert.append(el("strong", {}, `⚠ ${flagged.length} 个搜索工具近 24 小时表现异常（只提示，不会改变路由）`));
+    const ul = el("ul");
+    for (const [name, h] of flagged.sort((a, b) => (a[1].verdict === "broken" ? 0 : 1) - (b[1].verdict === "broken" ? 0 : 1))) {
+      ul.append(
+        el(
+          "li",
+          {},
+          healthBadge(h),
+          " ",
+          el("code", {}, name),
+          el("span", { class: "muted small" }, ` ${h.reason}`),
+          problemActions(h.ignore_key, h.fixable ? [name] : [], `${VERDICT[h.verdict][0]}：${h.reason}`),
+        ),
+      );
+    }
+    alert.append(ul);
+  }
+}
+
+function renderHandled(data) {
+  const box = $("handled");
+  const body = $("handled-body");
+  body.replaceChildren();
+  const ignored = [
+    ...(data.setup?.items || []).filter((it) => it.ignored).map((it) => ({ key: it.ignore_key, title: it.title, detail: it.detail })),
+    ...Object.entries(data.health || {})
+      .filter(([, h]) => h.ignored)
+      .map(([tool, h]) => ({ key: h.ignore_key, title: tool, detail: `${VERDICT[h.verdict][0]}：${h.reason}` })),
+  ];
+  const disabled = data.handled?.disabled || [];
+  box.hidden = !ignored.length && !disabled.length;
+  const parts = [];
+  if (disabled.length) parts.push(`已停用 ${disabled.length} 个工具`);
+  if (ignored.length) parts.push(`已忽略 ${ignored.length} 条提醒`);
+  $("handled-summary").textContent = `已处理：${parts.join("，")}`;
+  if (disabled.length) {
+    body.append(el("h3", {}, "由 DeepDeep 停用的工具（也可以在 AstrBot 的工具管理里启用）"));
+    const ul = el("ul");
+    for (const d of disabled) {
+      ul.append(
+        el(
+          "li",
+          {},
+          el("code", {}, d.tool),
+          el("span", { class: "muted small" }, ` ${d.ts ? new Date(d.ts * 1000).toLocaleString() : ""} · ${d.reason || ""}${d.still_disabled ? "" : " · 已在别处重新启用"}`),
+          el(
+            "span",
+            { class: "row-actions" },
+            actionBtn(d.still_disabled ? "重新启用" : "从列表移除", () => overviewAction("enable-tools", { tools: [d.tool] }, `已重新启用 ${d.tool}`)),
+          ),
+        ),
+      );
+    }
+    body.append(ul);
+  }
+  if (ignored.length) {
+    body.append(el("h3", {}, "已忽略的提醒（问题变化、或恢复后再出问题时会重新提醒）"));
+    const ul = el("ul");
+    for (const it of ignored) {
+      ul.append(
+        el(
+          "li",
+          {},
+          el("strong", {}, it.title),
+          el("span", { class: "muted small" }, ` ${it.detail}`),
+          el("span", { class: "row-actions" }, actionBtn("恢复提醒", () => overviewAction("unignore", { key: it.key }, "已恢复提醒"))),
+        ),
+      );
+    }
+    body.append(ul);
+  }
+}
+
+async function loadOverview() {
+  renderLanes(await bridge.apiGet("overview", { range: "24h" }));
+}
+
+// ---------- 网络连通性 ----------
+
+function probeCell(res) {
+  if (!res) return el("span", { class: "muted small" }, "未检测");
+  return res.ok
+    ? el("span", { class: "badge ok", title: `HTTP ${res.status}` }, `可连接 · ${res.ms} ms`)
+    : el("span", { class: "badge bad" }, `连不上（${res.error}）`);
+}
+
+function coverage(text) {
+  const cls = { 好: "ok", 能读: "ok", 较好: "ok", 一般: "warn", 取决于引擎: "warn", 取决于服务器: "warn" }[text] || "";
+  return el("span", { class: `badge ${cls}` }, text);
+}
+
+function renderNetwork(data) {
+  const check = data.last_check;
+  const body = $("net-body");
+  body.replaceChildren();
+  if (!data.groups.length) body.append(emptyRow(5, "没有读取到搜索类工具"));
+  for (const g of data.groups) {
+    const ep = g.endpoint ? check?.endpoints?.[g.endpoint] : null;
+    let probe;
+    if (g.key === "searxng" && check?.searxng) {
+      const sx = check.searxng;
+      probe = sx.ok
+        ? el("span", { class: `badge ${sx.working.length <= 1 || sx.relevant === 0 ? "bad" : sx.failed.length ? "warn" : "ok"}` }, `${sx.working.length} 个引擎可用`)
+        : el("span", { class: "badge bad" }, `查询失败（${sx.error}）`);
+    } else if (g.kind === "server") {
+      probe = check ? el("span", { class: `badge ${check.server_foreign_ok ? "ok" : "warn"}` }, check.server_foreign_ok ? "服务器能访问国外" : "服务器访问不了国外") : el("span", { class: "muted small" }, "未检测");
+    } else if (g.kind === "local") {
+      probe = el("span", { class: "muted small" }, "不联网");
+    } else {
+      probe = check ? probeCell(ep) : el("span", { class: "muted small" }, "未检测");
+    }
+    body.append(
+      el(
+        "tr",
+        {},
+        el("td", {}, el("strong", {}, g.label), el("div", { class: "muted small tools-line", title: g.tools.join("\n") }, g.tools.length > 3 ? `${g.tools.slice(0, 2).join("、")} 等 ${g.tools.length} 个` : g.tools.join("、"))),
+        el(
+          "td",
+          {},
+          el("span", { class: `badge ${g.intranet ? "accent" : ""}` }, g.kind_label),
+          g.region !== "none" && g.region !== "self" ? el("span", { class: "muted small" }, ` 服务商在${g.region_label}`) : null,
+          el("div", { class: "endpoint" }, g.endpoint ? el("code", {}, g.endpoint) : el("span", { class: "muted small" }, g.kind === "server" ? "直接访问目标网页" : "")),
+        ),
+        el("td", { class: "cover" }, el("div", {}, el("span", { class: "muted small" }, "国内 "), coverage(g.domestic)), el("div", {}, el("span", { class: "muted small" }, "国外 "), coverage(g.foreign))),
+        el("td", {}, probe),
+        el("td", { class: "small note" }, g.note),
+      ),
+    );
+  }
+
+  const sum = $("net-summary");
+  sum.hidden = !check;
+  sum.replaceChildren();
+  if (check) {
+    const line = (region, title) =>
+      el(
+        "div",
+        {},
+        el("span", { class: `badge ${check[`server_${region}_ok`] ? "ok" : "bad"}` }, `${title}${check[`server_${region}_ok`] ? "可访问" : "不可访问"}`),
+        " ",
+        ...check.sites[region].map((x) => el("span", { class: "muted small site" }, `${x.label} ${x.ok ? `${x.ms} ms` : x.error}`)),
+      );
+    sum.append(
+      el("div", { class: "muted small" }, `服务器网络（${new Date(check.checked_at * 1000).toLocaleString()} 检测）`),
+      line("domestic", "国内网站"),
+      line("foreign", "国外网站"),
+    );
+  }
+
+  const box = $("searxng-box");
+  const sx = check?.searxng;
+  box.hidden = !sx;
+  box.replaceChildren();
+  if (sx?.ok) {
+    box.append(
+      el("h3", {}, `SearXNG 引擎（${data.searxng_url}，测试词 DeepSeek：${sx.results} 条结果，${sx.relevant} 条包含测试词）`),
+      el("div", {}, el("span", { class: "muted small" }, "能用："), ...(sx.working.length ? sx.working.map((e) => el("span", { class: "badge ok eng" }, e)) : [el("span", { class: "badge bad" }, "没有")])),
+    );
+    if (sx.failed.length) {
+      box.append(el("div", {}, el("span", { class: "muted small" }, "被拦截或无响应："), ...sx.failed.map((f) => el("span", { class: "badge bad eng", title: f.reason }, `${f.engine}（${f.reason}）`))));
+    }
+    if (sx.working.length <= 1 || sx.relevant === 0) {
+      box.append(el("p", { class: "small warn-text" }, "只剩很少的引擎能用时，SearXNG 的通用搜索结果往往和问题无关。可以考虑在 SearXNG 里换用其他引擎、给服务器配置代理，或在 AstrBot 里关掉这些工具。"));
+    }
+  }
+}
+
+async function loadNetwork() {
+  renderNetwork(await bridge.apiGet("network"));
+}
 
 // ---------- 数据加载 ----------
 
@@ -800,30 +1194,94 @@ async function loadTools(preview = false) {
 }
 
 async function refreshAll() {
-  const results = await Promise.allSettled([loadStatus(), loadUsage(), loadSearchStats(), loadCalls(), loadFacets(), loadTools(formDirty)]);
+  // 健康状况要先拿到，“各搜索工具用量”表格要用
+  const first = await Promise.allSettled([loadOverview()]);
+  const results = [...first, ...(await Promise.allSettled([loadStatus(), loadUsage(), loadSearchStats(), loadCalls(), loadFacets(), loadTools(formDirty), loadNetwork()]))];
   const failed = results.find((r) => r.status === "rejected");
   if (failed) toast(`加载失败：${failed.reason?.message || failed.reason}`, true);
 }
 
 // ---------- 事件 ----------
 
-form.addEventListener("change", updateBudgetHints);
-form.addEventListener("input", () => {
-  formDirty = true;
-  updateBudgetHints();
-});
+// 修改后自动保存：勾选、下拉立即保存；输入框停顿一会儿再保存
+const saveState = $("save-state");
+let saveTimer;
+let saving = Promise.resolve();
 
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const btn = form.querySelector('button[type="submit"]');
-  await withBusy(btn, async () => {
+function setSaveState(text, cls = "") {
+  saveState.textContent = text;
+  saveState.className = `save-state small ${cls}`;
+}
+
+let editSeq = 0;
+
+function scheduleSave(delay) {
+  editSeq += 1;
+  formDirty = true;
+  setSaveState("有未保存的修改…", "muted");
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saving = saving.then(saveNow);
+  }, delay);
+}
+
+async function saveNow() {
+  // 数字框正在输入一半（比如空着）时先不保存
+  if (!form.checkValidity()) {
+    setSaveState("有内容不符合要求，修改后会自动保存", "bad-text");
+    return;
+  }
+  setSaveState("保存中…", "muted");
+  const seq = editSeq;
+  try {
+    const before = lastStatus?.settings || {};
     const status = await bridge.apiPost("settings", readForm());
-    formDirty = false;
+    // 保存期间又改了内容：别用服务器返回的值覆盖正在编辑的表单
+    formDirty = seq !== editSeq;
     renderStatus(status);
-    await loadTools();
-    toast("设置已保存并立即生效");
-  });
+    setSaveState(`已自动保存 · ${new Date().toLocaleTimeString()}`, "ok-text");
+    const st = status.settings;
+    const routingChanged =
+      before.own_tools_enabled !== st.own_tools_enabled ||
+      before.routing_mode !== st.routing_mode ||
+      String(before.fallback_tool_patterns) !== String(st.fallback_tool_patterns) ||
+      String(before.specialist_rules) !== String(st.specialist_rules) ||
+      before.tavily_enabled !== st.tavily_enabled ||
+      String(before.search_lane_rules) !== String(st.search_lane_rules);
+    if (routingChanged) await Promise.allSettled([loadTools(), loadOverview(), loadNetwork()]);
+  } catch (err) {
+    setSaveState(`保存失败：${err?.message || err}`, "bad-text");
+    toast(`保存失败：${err?.message || err}`, true);
+  }
+}
+
+form.addEventListener("submit", (e) => e.preventDefault());
+form.addEventListener("change", (e) => {
+  updateBudgetHints();
+  updateModeHint();
+  const t = e.target;
+  if (t.matches("select, input[type=checkbox]")) scheduleSave(0);
+  else scheduleSave(600);
 });
+form.addEventListener("input", (e) => {
+  updateBudgetHints();
+  if (e.target.matches("textarea, input[type=number]")) scheduleSave(1200);
+});
+$("btn-tools-more").addEventListener("click", () => {
+  toolsExpanded = !toolsExpanded;
+  renderTools(lastTools);
+});
+$("btn-net").addEventListener("click", (e) =>
+  withBusy(e.currentTarget, async () => {
+    $("btn-net").textContent = "检测中…";
+    try {
+      renderNetwork(await bridge.apiPost("network-check", {}));
+      toast("连通性检测完成");
+    } finally {
+      $("btn-net").textContent = "检测连通性";
+    }
+  }),
+);
 
 $("btn-copy-repo").addEventListener("click", async () => {
   const text = $("repo-url").textContent;
@@ -860,7 +1318,6 @@ $("btn-diag-copy").addEventListener("click", async () => {
     toast("浏览器不允许自动复制，已选中全部内容，请按 Ctrl+C 复制");
   }
 });
-$("btn-preview").addEventListener("click", (e) => withBusy(e.currentTarget, () => loadTools(true)));
 $("btn-refresh").addEventListener("click", (e) => withBusy(e.currentTarget, refreshAll));
 $("btn-reset").addEventListener("click", (e) =>
   withBusy(e.currentTarget, async () => {
@@ -876,12 +1333,47 @@ $("btn-test").addEventListener("click", (e) =>
   }),
 );
 
+// ---------- 顶部导航 ----------
+// 面板在 iframe 里，改 location.hash 可能被宿主拦截，所以用 scrollIntoView
+const navLinks = [...document.querySelectorAll("#navbar a")];
+for (const a of navLinks) {
+  a.addEventListener("click", (e) => {
+    e.preventDefault();
+    document.getElementById(a.dataset.target)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+function updateActiveNav() {
+  // 取顶部导航下方第一个可见的区块
+  let current = navLinks[0];
+  for (const a of navLinks) {
+    const sec = document.getElementById(a.dataset.target);
+    if (sec && sec.getBoundingClientRect().top <= 80) current = a;
+  }
+  // 滚到底时高亮最后一项
+  if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4) current = navLinks.at(-1);
+  for (const a of navLinks) a.classList.toggle("active", a === current);
+  // 手机上导航栏可横向滚动：让高亮项留在可见范围内（不能用 scrollIntoView，会带动整页滚动）
+  const nav = $("navbar");
+  const left = current.getBoundingClientRect().left - nav.getBoundingClientRect().left + nav.scrollLeft;
+  if (left < nav.scrollLeft || left + current.offsetWidth > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = left - 16;
+}
+let navTick = false;
+window.addEventListener("scroll", () => {
+  if (navTick) return;
+  navTick = true;
+  requestAnimationFrame(() => {
+    navTick = false;
+    updateActiveNav();
+  });
+});
+
 await bridge.ready();
 await refreshAll();
+updateActiveNav();
 setInterval(() => {
   if (document.visibilityState === "visible") {
     // 只在第一页且没有展开详情时自动刷新，免得打断查看
-    const tasks = [loadStatus()];
+    const tasks = [loadStatus(), loadOverview()];
     if (callPage === 0 && !document.querySelector("tr.row-main.open")) tasks.push(loadCalls());
     Promise.allSettled(tasks);
   }

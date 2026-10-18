@@ -20,7 +20,7 @@ from typing import Any
 
 from .log import logger
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MAX_ARGS_CHARS = 4000
 MAX_RESULT_CHARS = 8000
 # 每写入这么多条清理一次过期记录
@@ -45,7 +45,9 @@ CREATE TABLE IF NOT EXISTS calls (
     error TEXT,
     note TEXT,
     detail TEXT,
-    content_recorded INTEGER NOT NULL DEFAULT 0
+    content_recorded INTEGER NOT NULL DEFAULT 0,
+    quality TEXT,
+    relevance REAL
 );
 CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts);
 CREATE INDEX IF NOT EXISTS idx_calls_tool ON calls(tool);
@@ -69,7 +71,32 @@ _COLUMNS = (
     "note",
     "detail",
     "content_recorded",
+    "quality",
+    "relevance",
 )
+
+# 版本 1 的数据库没有这些列，打开时补上
+_MIGRATIONS = (
+    ("quality", "ALTER TABLE calls ADD COLUMN quality TEXT"),
+    ("relevance", "ALTER TABLE calls ADD COLUMN relevance REAL"),
+)
+
+# 一次调用在健康统计里算哪一类（running / blocked / cache_hit 不算）
+_HEALTH_SQL = """
+SELECT tool, source,
+  COUNT(*) AS total,
+  SUM(status IN ('error', 'interrupted') OR COALESCE(quality, '') = 'error') AS error,
+  SUM(status NOT IN ('error', 'interrupted') AND COALESCE(quality, '') != 'error'
+      AND (status = 'empty' OR COALESCE(quality, '') = 'empty')) AS empty,
+  SUM(COALESCE(quality, '') = 'irrelevant'
+      AND status NOT IN ('error', 'interrupted', 'empty')) AS irrelevant,
+  AVG(relevance) AS avg_relevance,
+  MAX(CASE WHEN status = 'ok' AND quality IS NULL THEN ts END) AS last_ok_ts,
+  MAX(ts) AS last_ts
+FROM calls
+WHERE status NOT IN ('running', 'blocked', 'cache_hit') {extra}
+GROUP BY tool, source
+"""
 
 
 def _clip(text: str | None, limit: int) -> str | None:
@@ -113,6 +140,10 @@ class CallLog:
             if path is not None:
                 self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.executescript(_SCHEMA)
+            columns = {r[1] for r in self._conn.execute("PRAGMA table_info(calls)")}
+            for column, sql in _MIGRATIONS:
+                if column not in columns:
+                    self._conn.execute(sql)
             self._conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             # 上次运行时没收尾的记录（进程退出、重启）标记为中断
             self._conn.execute(
@@ -170,12 +201,15 @@ class CallLog:
         request_id: str | None = None,
         http_status: int | None = None,
         detail: dict | None = None,
+        quality: str | None = None,
+        relevance: float | None = None,
     ) -> None:
         with self._lock:
             self._conn.execute(
                 "UPDATE calls SET status=?, duration_ms=?, result=?, result_chars=?, error=?, "
                 "note=COALESCE(?, note), request_id=COALESCE(?, request_id), "
-                "http_status=COALESCE(?, http_status), detail=COALESCE(?, detail) WHERE id=?",
+                "http_status=COALESCE(?, http_status), detail=COALESCE(?, detail), "
+                "quality=?, relevance=? WHERE id=?",
                 (
                     status,
                     duration_ms,
@@ -188,6 +222,8 @@ class CallLog:
                     request_id,
                     http_status,
                     _dumps(detail),
+                    quality,
+                    relevance,
                     row_id,
                 ),
             )
@@ -342,6 +378,44 @@ class CallLog:
             for key in ("ok", "empty", "cache_hit", "error", "blocked"):
                 item[key] = int(item[key] or 0)
             item["avg_ms"] = int(item["avg_ms"]) if item["avg_ms"] is not None else None
+            out.append(item)
+        return out
+
+    def tool_health(
+        self, since: float | None = None, streak_window: int = 5
+    ) -> list[dict]:
+        """按工具汇总失败、空结果、不相关的次数，以及最近连续出问题的次数。"""
+        extra, params = ("AND ts >= ?", [since]) if since else ("", [])
+        with self._lock:
+            rows = self._conn.execute(
+                _HEALTH_SQL.format(extra=extra), params
+            ).fetchall()
+            recent = self._conn.execute(
+                "SELECT tool, status, quality FROM calls "
+                f"WHERE status NOT IN ('running', 'blocked', 'cache_hit') {extra} "
+                "ORDER BY id DESC",
+                params,
+            ).fetchall()
+        streaks: dict[str, int] = {}
+        done: set[str] = set()
+        seen: dict[str, int] = {}
+        for tool, status, quality in recent:
+            if tool in done:
+                continue
+            seen[tool] = seen.get(tool, 0) + 1
+            bad = status in ("error", "interrupted", "empty") or quality is not None
+            if bad:
+                streaks[tool] = streaks.get(tool, 0) + 1
+            if not bad or seen[tool] >= streak_window:
+                done.add(tool)
+        out = []
+        for r in rows:
+            item = dict(r)
+            for key in ("total", "error", "empty", "irrelevant"):
+                item[key] = int(item[key] or 0)
+            if item["avg_relevance"] is not None:
+                item["avg_relevance"] = round(float(item["avg_relevance"]), 2)
+            item["bad_streak"] = streaks.get(item["tool"], 0)
             out.append(item)
         return out
 

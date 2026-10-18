@@ -77,7 +77,7 @@ NOT_FALLBACK = [
 
 
 def test_community_search_tools_are_recognized():
-    r = ToolRouter("deepseek_first")
+    r = ToolRouter("deepseek_first", lane_rules=[])
     for name, fetch_like in COMMUNITY_FALLBACK.items():
         assert r.is_fallback(name), name
         assert r.is_fetch_like(name) is fetch_like, name
@@ -92,7 +92,7 @@ def test_kimi_and_grok_hidden_while_deepseek_available():
         *COMMUNITY_FALLBACK,
         *NOT_FALLBACK,
     ]
-    hidden = ToolRouter("deepseek_first").plan(names, True)
+    hidden = ToolRouter("deepseek_first", lane_rules=[]).plan(names, True)
     assert hidden == set(COMMUNITY_FALLBACK)
 
 
@@ -147,6 +147,7 @@ async def test_activity_detail_records_request_attempts_and_results(fake_api, no
     assert d["request"] == {
         "query": "q",
         "count": 3,
+        "api_count": 10,
         "need_content": False,
         "ori_question": "用户问的话",
     }
@@ -224,6 +225,39 @@ def test_recent_query_keeps_all_and_warns_about_ordering():
 
 
 def test_plain_query_still_filtered():
-    results = [_res(1.6, "2026-10-01"), _res(0.3, "2026-10-15")]
-    text = format_search_results("麒麟 9050 评测", results, min_score=0.5)
-    assert "共 1 条" in text and "按相关度而不是发布时间" not in text
+    results = [_res(s, "2026-10-01") for s in (1.6, 1.2, 0.9, 0.8, 0.3)]
+    text = format_search_results("麒麟 9050 评测", results, count=5, min_score=0.5)
+    assert "共 4 条" in text and "按相关度而不是发布时间" not in text
+    assert "相关度: 0.3" not in text
+
+
+def test_recent_query_newest_date_counts_all_results_and_appends_newest():
+    # 复现：前 5 条最新的是 10/04，但 API 返回的第 8 条是 10/16
+    dates = [
+        "2026-10-01",
+        "2026-09-20",
+        "2026-10-04",
+        "2026-08-01",
+        "2026-09-01",
+        "2026-07-01",
+        "2026-06-01",
+        "2026-10-16",
+        "2026-10-10",
+        "2026-05-01",
+    ]
+    results = [_res(2.0 - i * 0.1, d) for i, d in enumerate(dates)]
+    text = format_search_results("极客湾 最新视频", results, count=5, min_score=0.5)
+    assert "本次最新一条发布于 2026-10-16" in text
+    assert "共 7 条" in text
+    assert "以下是日期较新、但相关度排名靠后的结果" in text
+    assert text.index("2026-10-16") < text.index("2026-10-10")
+
+
+def test_recent_query_no_extra_when_top_results_are_newest():
+    results = [
+        _res(1.6, "2026-10-16"),
+        _res(1.0, "2026-10-01"),
+        _res(0.9, "2026-09-01"),
+    ]
+    text = format_search_results("极客湾 最新视频", results, count=2, min_score=0.5)
+    assert "共 2 条" in text and "日期较新" not in text

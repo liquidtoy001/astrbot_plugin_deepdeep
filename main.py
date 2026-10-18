@@ -12,7 +12,7 @@ from .core.client import DeepSeekToolsClient, DeepSeekToolsError
 from .core.guard import BudgetGuard, CircuitBreaker
 from .core.pricing import DEFAULT_CURRENCY, get_currency
 from .core.recorder import ToolCallRecorder
-from .core.router import DEFAULT_MODE, OWN_TOOLS, ToolRouter
+from .core.router import DEFAULT_MODE, OWN_TOOLS, TAVILY_TOOL, ToolRouter
 from .core.service import (
     SearchService,
     Settings,
@@ -22,10 +22,11 @@ from .core.service import (
     new_request_id,
 )
 from .core.stats import UsageStats
+from .core.tavily import TavilyClient, TavilySearch
 from .web_api import WebApi
 
 PLUGIN_NAME = "astrbot_plugin_deepdeep"
-PLUGIN_VERSION = "v1.0.0"
+PLUGIN_VERSION = "v1.0.1"
 DEEPSEEK_HOST = "api.deepseek.com"
 ROUTING_EXTRA_KEY = "deepdeep_routing"
 
@@ -64,6 +65,8 @@ class DeepSeekSearchPlugin(Star):
             activity=ActivityLog(),
         )
         self.router = ToolRouter()
+        self.tavily = TavilySearch(TavilyClient(self.tavily_keys))
+        self.tavily_enabled = True
         self.call_log = self._open_call_log(data_dir)
         self.recorder = ToolCallRecorder(
             self.call_log,
@@ -103,7 +106,13 @@ class DeepSeekSearchPlugin(Star):
         ttl = cfg_float(c, "cache_ttl_seconds", 600, 0, 86400)
         if ttl != self._cache_ttl:
             svc.cache = TTLCache(ttl)
+            self.tavily.cache = TTLCache(ttl)
             self._cache_ttl = ttl
+        self.tavily_enabled = bool(c.get("tavily_enabled", True))
+        self.tavily.client.timeout = cfg_float(c, "request_timeout", 20, 3, 120)
+        self.tavily.default_count = svc.settings.default_count
+        self.tavily.max_count = svc.settings.max_count
+        self.tavily.max_chars = svc.settings.max_search_chars
         currency = get_currency(str(c.get("billing_currency", DEFAULT_CURRENCY)))
         svc.stats.price = currency.price
         svc.budget.currency = currency
@@ -125,6 +134,8 @@ class DeepSeekSearchPlugin(Star):
             str(c.get("routing_mode", DEFAULT_MODE)),
             c.get("fallback_tool_patterns"),
             c.get("specialist_rules"),
+            own_enabled=bool(c.get("own_tools_enabled", True)),
+            lane_rules=c.get("search_lane_rules"),
         )
         self.inject_guide = bool(c.get("inject_search_guide", True))
 
@@ -149,17 +160,60 @@ class DeepSeekSearchPlugin(Star):
     def _resolve_api_key(self) -> str | None:
         return self.resolve_key_source()[0]
 
+    @staticmethod
+    def resolve_plugin(module: str) -> str | None:
+        return _resolve_plugin_name(module)
+
+    def _builtin_web_search(self) -> dict:
+        try:
+            return self.context.get_config().get("provider_settings", {}) or {}
+        except Exception:  # noqa: BLE001 - 读不到配置时当作没有
+            return {}
+
+    def tavily_key_source(self) -> tuple[list[str], str]:
+        """返回 (Key 列表, 来源说明)。插件配置优先，否则复用 AstrBot 网页搜索里的 Tavily Key。"""
+        own = str(self.config.get("tavily_api_key", "") or "").strip()
+        if own:
+            return [own], "插件配置"
+        keys = self._builtin_web_search().get("websearch_tavily_key") or []
+        if isinstance(keys, str):
+            keys = [keys]
+        keys = [k.strip() for k in keys if isinstance(k, str) and k.strip()]
+        return keys, ("复用 AstrBot 网页搜索的 Tavily Key" if keys else "")
+
+    def tavily_keys(self) -> list[str]:
+        return self.tavily_key_source()[0]
+
+    def tavily_usable(self, names: list[str] | None = None) -> tuple[bool, str]:
+        """本次请求要不要提供 deepdeep_tavily_search，以及不提供的原因。"""
+        if not self.tavily_enabled:
+            return False, "已在插件设置中关闭"
+        if not self.tavily.client.has_key():
+            return False, "没有找到 Tavily API Key"
+        ps = self._builtin_web_search()
+        builtin = ps.get("web_search") and ps.get("websearch_provider") == "tavily"
+        if builtin or (names and "web_search_tavily" in names):
+            return False, "AstrBot 内置网页搜索已经是 Tavily，避免重复"
+        return True, ""
+
     # ---------- 工具路由 ----------
 
     # 优先级设为最低，在其他插件的 on_llm_request 钩子之后运行，
     # 这样它们追加的搜索工具也能被正确路由
     @filter.on_llm_request(priority=-100)
     async def route_search_tools(self, event: AstrMessageEvent, req: ProviderRequest):
-        """DeepSeek 可用时藏起其他搜索工具；不可用（无 Key、超预算、熔断）时藏起自己。"""
+        """按路由模式增删本次请求的搜索工具，并加上分工说明。
+
+        关闭“启用自带搜索”时，把 DeepDeep 自己的工具从本次请求里拿掉，其余照常。
+        """
         toolset = getattr(req, "func_tool", None)
         if not toolset:
             return
-        managed = any(n in OWN_TOOLS for n in toolset.names())
+        names = toolset.names()
+        managed = any(n in OWN_TOOLS or n == TAVILY_TOOL for n in names)
+        # Tavily 不可用（关闭、没有 Key、内置网页搜索已经是 Tavily）时只在本次请求里拿掉
+        if TAVILY_TOOL in names and not self.tavily_usable(names)[0]:
+            toolset.remove_tool(TAVILY_TOOL)
         avail = self.service.availability("search")
         state = self.router.apply(toolset, avail.ok, req, avail.code)
         event.set_extra(ROUTING_EXTRA_KEY, state)
@@ -175,6 +229,13 @@ class DeepSeekSearchPlugin(Star):
                 f"hidden_own={state.hidden_own} "
                 f"hidden_fallback={[t.name for t in state.hidden_fallback]}"
             )
+
+    def _disabled_text(self, kind: str) -> str | None:
+        """关闭了自带搜索，但模型仍调用了（比如其他插件发起的请求没经过路由）。"""
+        if self.router.own_enabled:
+            return None
+        label = "联网搜索" if kind == "search" else "网页抓取"
+        return f"DeepDeep 自带的{label}已在插件设置中关闭，请改用其他搜索工具。"
 
     def _finish(
         self, event: AstrMessageEvent, outcome: ToolOutcome, kind: str = "search"
@@ -304,6 +365,9 @@ class DeepSeekSearchPlugin(Star):
             query(string): 搜索关键词，最多 128 字，可包含上面的语法
             count(number): 返回结果数，可不填，默认 5
         """
+        disabled = self._disabled_text("search")
+        if disabled:
+            return disabled
         outcome = await self.service.search(query, count, event.message_str)
         return self._finish(event, outcome)
 
@@ -314,8 +378,42 @@ class DeepSeekSearchPlugin(Star):
         Args:
             url(string): 完整的网页链接，以 http:// 或 https:// 开头
         """
+        disabled = self._disabled_text("fetch")
+        if disabled:
+            return disabled
         outcome = await self.service.fetch(url)
         return self._finish(event, outcome, "fetch")
+
+    @filter.llm_tool(name=TAVILY_TOOL)
+    async def deepdeep_tavily_search(
+        self, event: AstrMessageEvent, query: str, count: int = 0
+    ) -> str:
+        """用 Tavily 联网搜索，擅长英文网页和技术资料：编程、软件版本号、安全漏洞（CVE）、官方文档、开源项目等。
+
+        结果大多不带发布日期；问新闻、比赛、“最新、最近”这类时效问题时优先用 deepdeep_web_search。
+
+        Args:
+            query(string): 搜索关键词，用简洁的关键词，技术问题建议用英文
+            count(number): 返回结果数，可不填，默认 5
+        """
+        ok, why = self.tavily_usable()
+        if not ok:
+            return f"Tavily 搜索暂不可用：{why}。请改用其他搜索工具。"
+        outcome = await self.tavily.search(query, count)
+        if not outcome.should_fallback:
+            return outcome.text
+        state = event.get_extra(ROUTING_EXTRA_KEY)
+        names = state.toolset.names() if state is not None else []
+        alts = [n for n in names if n == OWN_TOOLS[0] and self.router.own_enabled]
+        alts += [
+            n for n in self.router.alternatives(names, "search") if n != TAVILY_TOOL
+        ]
+        if not alts:
+            return outcome.text
+        listed = "、".join(alts[:3])
+        if outcome.reason == "empty":
+            return f"{outcome.text}\n可以改用 {listed} 再搜一次。"
+        return f"{outcome.text}\n请改用 {listed} 继续完成任务。"
 
     # ---------- 管理命令 ----------
 
@@ -419,6 +517,24 @@ class DeepSeekSearchPlugin(Star):
                     for r in data["rows"][:8]
                 ]
                 report += "\n近 24 小时各搜索工具调用：" + "、".join(parts)
+            # 面板上点了“忽略”的提醒这里也不再列出
+            setup, health = await asyncio.to_thread(self.web.problems, "24h")
+            flagged = [
+                f"{tool}（{h['verdict_label']}：{h['reason']}）"
+                for tool, h in health.items()
+                if h["verdict"] in ("broken", "degraded") and not h["ignored"]
+            ]
+            if flagged:
+                report += "\n⚠ 可能有问题的搜索工具：\n" + "\n".join(flagged[:6])
+            missing = [
+                it
+                for it in setup["items"]
+                if it["status"] == "missing" and not it["ignored"]
+            ]
+            if missing:
+                report += "\n⚠ 配置不完整：\n" + "\n".join(
+                    f"{it['title']}：{it['detail']}" for it in missing[:6]
+                )
             yield event.plain_result(report)
         elif action == "reset":
             self.service.breaker.reset()
@@ -430,6 +546,7 @@ class DeepSeekSearchPlugin(Star):
 
     async def terminate(self):
         await self.service.client.close()
+        await self.tavily.client.close()
         try:
             self.call_log.close()
         except Exception as exc:  # noqa: BLE001

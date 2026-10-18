@@ -16,6 +16,7 @@ class FakeDeepSeek:
     def __init__(self) -> None:
         self.search_queue: list[tuple[int, object, dict]] = []
         self.fetch_queue: list[tuple[int, object, dict]] = []
+        self.tavily_queue: list[tuple[int, object, dict]] = []
         self.requests: list[dict] = []
 
     async def _handle(self, request: web.Request, queue) -> web.Response:
@@ -39,6 +40,9 @@ class FakeDeepSeek:
     async def fetch(self, request):
         return await self._handle(request, self.fetch_queue)
 
+    async def tavily(self, request):
+        return await self._handle(request, self.tavily_queue)
+
 
 @pytest.fixture
 async def fake_api():
@@ -46,6 +50,8 @@ async def fake_api():
     app = web.Application()
     app.router.add_post("/v1/tools/search", fake.search)
     app.router.add_post("/v1/tools/fetch", fake.fetch)
+    # 同一个假服务也模拟 Tavily 的 /search
+    app.router.add_post("/search", fake.tavily)
     server = TestServer(app)
     await server.start_server()
     fake.base_url = str(server.make_url("")).rstrip("/")

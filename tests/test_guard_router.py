@@ -131,13 +131,13 @@ OWN = {"deepdeep_web_search", "deepdeep_web_fetch"}
 
 
 def test_default_patterns_classify_known_tools():
-    r = ToolRouter("deepseek_first")
+    r = ToolRouter("deepseek_first", lane_rules=[])
     assert {n for n in NAMES if r.is_fallback(n)} == FALLBACK
 
 
 def test_plan_per_mode():
-    assert ToolRouter("deepseek_first").plan(NAMES, True) == FALLBACK
-    assert ToolRouter("deepseek_first").plan(NAMES, False) == OWN
+    assert ToolRouter("deepseek_first", lane_rules=[]).plan(NAMES, True) == FALLBACK
+    assert ToolRouter("deepseek_first", lane_rules=[]).plan(NAMES, False) == OWN
     assert ToolRouter("deepseek_only").plan(NAMES, False) == FALLBACK
     assert ToolRouter("fallback_only").plan(NAMES, True) == OWN
     assert ToolRouter("coexist").plan(NAMES, False) == set()
@@ -147,7 +147,9 @@ def test_plan_per_mode():
 def test_deepseek_first_without_fallback_keeps_own_tools():
     # 没有备用工具时不藏自己，模型才能拿到“暂不可用”的说明
     assert (
-        ToolRouter("deepseek_first").plan([*OWN, "astrbot_execute_shell"], False)
+        ToolRouter("deepseek_first", lane_rules=[]).plan(
+            [*OWN, "astrbot_execute_shell"], False
+        )
         == set()
     )
 
@@ -158,7 +160,7 @@ def test_custom_patterns_and_case_insensitivity():
     # 非法配置回退到默认
     assert (
         ToolRouter(fallback_patterns="oops").fallback_patterns
-        == ToolRouter("deepseek_first").fallback_patterns
+        == ToolRouter("deepseek_first", lane_rules=[]).fallback_patterns
     )
 
 
@@ -279,16 +281,18 @@ def test_only_hides_the_kind_deepseek_can_replace():
         "tavily_extract_web_page",
         "searxng_web_fetch_url",
     ]
-    assert ToolRouter("deepseek_first").plan(names, True) == {
+    assert ToolRouter("deepseek_first", lane_rules=[]).plan(names, True) == {
         "web_search_tavily"
     }  # 没有 deepdeep_web_fetch，抓取工具保留
     names = ["deepdeep_web_fetch", "web_search_tavily", "searxng_web_fetch_url"]
-    assert ToolRouter("deepseek_first").plan(names, True) == {"searxng_web_fetch_url"}
+    assert ToolRouter("deepseek_first", lane_rules=[]).plan(names, True) == {
+        "searxng_web_fetch_url"
+    }
 
 
 def test_restore_also_updates_replaced_request_toolset():
     # skills_like 模式：AstrBot 在钩子之后把 req.func_tool 换成精简版工具集
-    router = ToolRouter("deepseek_first")
+    router = ToolRouter("deepseek_first", lane_rules=[])
     raw = _TS(
         ["deepdeep_web_search", "deepdeep_web_fetch", "web_search_tavily", "other"]
     )
@@ -358,7 +362,7 @@ BUDGET_NAMES = [
 
 
 def test_budget_cap_keeps_same_backend_hidden():
-    r = ToolRouter("deepseek_first")
+    r = ToolRouter("deepseek_first", lane_rules=[])
     assert r.is_same_backend("web_search_deepseek") and not r.is_same_backend(
         "deepdeep_web_search"
     )
@@ -379,13 +383,13 @@ def test_budget_cap_keeps_same_backend_hidden():
 def test_budget_cap_with_only_same_backend_fallback():
     # 唯一的备用就是内置 DeepSeek：藏起它，保留自己的工具让模型拿到“超出预算”的说明
     names = ["deepdeep_web_search", "web_search_deepseek"]
-    assert ToolRouter("deepseek_first").plan(names, False, "budget_monthly") == {
-        "web_search_deepseek"
-    }
+    assert ToolRouter("deepseek_first", lane_rules=[]).plan(
+        names, False, "budget_monthly"
+    ) == {"web_search_deepseek"}
 
 
 def test_restore_skips_same_backend_on_budget():
-    r = ToolRouter("deepseek_first")
+    r = ToolRouter("deepseek_first", lane_rules=[])
     ts = _TS(BUDGET_NAMES)
     state = r.apply(ts, True)
     restored = r.restore_fallback(state, drop_own=True, reason="budget_daily")
@@ -400,7 +404,10 @@ def test_restore_skips_same_backend_on_budget():
 
 
 def test_preview_has_budget_column():
-    rows = {t["name"]: t for t in ToolRouter("deepseek_first").preview(BUDGET_NAMES)}
+    rows = {
+        t["name"]: t
+        for t in ToolRouter("deepseek_first", lane_rules=[]).preview(BUDGET_NAMES)
+    }
     assert rows["web_search_deepseek"]["visible_when_down"] is True
     assert rows["web_search_deepseek"]["visible_when_budget"] is False
     assert rows["web_search_tavily"]["visible_when_budget"] is True
@@ -426,7 +433,7 @@ def test_specialist_rules_parse_and_match():
 
 
 def test_guide_lists_only_present_tools_in_rule_order():
-    r = ToolRouter("deepseek_first")
+    r = ToolRouter("deepseek_first", lane_rules=[])
     names = [
         "deepdeep_web_search",
         "deepdeep_web_fetch",
@@ -449,7 +456,7 @@ def test_guide_lists_only_present_tools_in_rule_order():
 
 
 def test_guide_uses_fallback_tools_when_deepseek_hidden():
-    r = ToolRouter("deepseek_first")
+    r = ToolRouter("deepseek_first", lane_rules=[])
     guide = r.guide(
         ["web_search_tavily", "tavily_extract_web_page", "searxng_web_search_images"]
     )
@@ -459,7 +466,7 @@ def test_guide_uses_fallback_tools_when_deepseek_hidden():
 
 def test_no_guide_without_specialists():
     assert (
-        ToolRouter("deepseek_first").guide(
+        ToolRouter("deepseek_first", lane_rules=[]).guide(
             ["deepdeep_web_search", "deepdeep_web_fetch"]
         )
         is None
@@ -467,7 +474,7 @@ def test_no_guide_without_specialists():
 
 
 def test_guide_caps_long_groups():
-    r = ToolRouter("deepseek_first")
+    r = ToolRouter("deepseek_first", lane_rules=[])
     papers = [
         "download_paper",
         "get_paper_latex",
@@ -496,10 +503,61 @@ def test_alternatives_rank_general_engines_first():
         "web_search_deepseek",
     ]
     assert r.alternatives(names, "search") == [
-        "searxng_web_search_general",
         "web_search_tavily",
+        "searxng_web_search_general",
         "searxng_web_search_news",
         "searxng_web_search_books",
         "searxng_web_search_files",
         "web_search_deepseek",
     ]
+
+
+def test_own_disabled_hides_own_tools_and_ranks_builtin_deepseek_first():
+    r = ToolRouter(own_enabled=False)
+    names = [
+        "deepdeep_web_search",
+        "deepdeep_web_fetch",
+        "searxng_web_search_general",
+        "web_search_deepseek",
+        "deepseek_fetch_web_page",
+        "searxng_web_search_images",
+    ]
+    assert r.plan(names, True) == {"deepdeep_web_search", "deepdeep_web_fetch"}
+    rest = [n for n in names if not n.startswith("deepdeep")]
+    assert r.alternatives(rest, "search")[0] == "web_search_deepseek"
+    guide = r.guide(rest)
+    assert (
+        "优先 web_search_deepseek；没有结果或结果不理想时再用 searxng_web_search_general"
+        in guide
+    )
+    assert "deepdeep_web_search" not in guide
+    lanes = r.lanes(names)
+    assert lanes[0]["primary"] == "web_search_deepseek"
+    assert lanes[1] == {
+        "key": "fetch",
+        "title": "读取网页全文",
+        "desc": "用户发来链接、摘要不够详细时",
+        "primary": "deepseek_fetch_web_page",
+        "backups": [],
+    }
+    assert lanes[2]["title"] == "找图片"
+
+
+def test_lanes_follow_guide_order():
+    r = ToolRouter()
+    names = [
+        "deepdeep_web_search",
+        "web_search_serpapi",
+        "searxng_web_search_general",
+        "scholar_search_serpapi",
+        "searxng_web_search_academic",
+        "finance_search_serpapi",
+    ]
+    lanes = {lane["title"]: lane for lane in r.lanes(names)}
+    assert lanes["通用网页搜索"]["primary"] == "deepdeep_web_search"
+    assert lanes["通用网页搜索"]["backups"] == [
+        "web_search_serpapi",
+        "searxng_web_search_general",
+    ]
+    assert lanes["学术论文和期刊"]["primary"] == "scholar_search_serpapi"
+    assert "股票、汇率等财经行情" in lanes
