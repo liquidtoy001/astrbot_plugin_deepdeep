@@ -5,11 +5,15 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, StarTools, register
 
+from .core import model_search
 from .core.activity import ActivityLog
 from .core.cache import TTLCache
 from .core.calllog import CallLog
+from .core.caps import ToolCaps, parse_limit_rules
 from .core.client import DeepSeekToolsClient, DeepSeekToolsError
 from .core.guard import BudgetGuard, CircuitBreaker
+from .core.preference import DEFAULT_PRESET
+from .core.preference import resolve as resolve_preference
 from .core.pricing import DEFAULT_CURRENCY, get_currency
 from .core.recorder import ToolCallRecorder
 from .core.router import DEFAULT_MODE, OWN_TOOLS, TAVILY_TOOL, ToolRouter
@@ -21,12 +25,12 @@ from .core.service import (
     cfg_int,
     new_request_id,
 )
-from .core.stats import UsageStats
+from .core.stats import MonthlyCounter, UsageStats
 from .core.tavily import TavilyClient, TavilySearch
-from .web_api import WebApi
+from .core.web_api import WebApi
 
 PLUGIN_NAME = "astrbot_plugin_deepdeep"
-PLUGIN_VERSION = "v1.0.1"
+PLUGIN_VERSION = "v1.0.2"
 DEEPSEEK_HOST = "api.deepseek.com"
 ROUTING_EXTRA_KEY = "deepdeep_routing"
 
@@ -65,8 +69,16 @@ class DeepSeekSearchPlugin(Star):
             activity=ActivityLog(),
         )
         self.router = ToolRouter()
-        self.tavily = TavilySearch(TavilyClient(self.tavily_keys))
+        self.tavily = TavilySearch(
+            TavilyClient(self.tavily_keys),
+            usage=MonthlyCounter(data_dir / "tavily_usage.json" if data_dir else None),
+        )
         self.tavily_enabled = True
+        # 其他搜索工具的每月调用上限
+        self.tool_caps = ToolCaps(
+            MonthlyCounter(data_dir / "tool_usage.json" if data_dir else None)
+        )
+        self.panel_language = "auto"
         self.call_log = self._open_call_log(data_dir)
         self.recorder = ToolCallRecorder(
             self.call_log,
@@ -113,6 +125,10 @@ class DeepSeekSearchPlugin(Star):
         self.tavily.default_count = svc.settings.default_count
         self.tavily.max_count = svc.settings.max_count
         self.tavily.max_chars = svc.settings.max_search_chars
+        self.tavily.monthly_limit = cfg_int(c, "tavily_monthly_limit", 0, 0, 1000000)
+        self.tool_caps.rules = parse_limit_rules(c.get("tool_monthly_limits"))
+        lang = str(c.get("panel_language", "auto"))
+        self.panel_language = lang if lang in ("auto", "zh", "en") else "auto"
         currency = get_currency(str(c.get("billing_currency", DEFAULT_CURRENCY)))
         svc.stats.price = currency.price
         svc.budget.currency = currency
@@ -136,6 +152,9 @@ class DeepSeekSearchPlugin(Star):
             c.get("specialist_rules"),
             own_enabled=bool(c.get("own_tools_enabled", True)),
             lane_rules=c.get("search_lane_rules"),
+            preference=resolve_preference(
+                c.get("search_preference", DEFAULT_PRESET), c.get("search_order")
+            ),
         )
         self.inject_guide = bool(c.get("inject_search_guide", True))
 
@@ -164,37 +183,73 @@ class DeepSeekSearchPlugin(Star):
     def resolve_plugin(module: str) -> str | None:
         return _resolve_plugin_name(module)
 
-    def _builtin_web_search(self) -> dict:
+    def _astrbot_config(self, umo: str | None = None):
+        """AstrBot 配置。传入会话（unified_msg_origin）时取这个会话所用的配置文件，
+        这样给不同会话绑定了不同配置文件时，网页搜索等设置也按会话读取。"""
+        if umo:
+            try:
+                return self.context.get_config(umo=umo)
+            except TypeError:  # 旧版本不支持按会话取配置
+                pass
+        return self.context.get_config()
+
+    def _builtin_web_search(self, umo: str | None = None) -> dict:
         try:
-            return self.context.get_config().get("provider_settings", {}) or {}
+            return self._astrbot_config(umo).get("provider_settings", {}) or {}
         except Exception:  # noqa: BLE001 - 读不到配置时当作没有
             return {}
 
-    def tavily_key_source(self) -> tuple[list[str], str]:
+    def tavily_key_source(self, umo: str | None = None) -> tuple[list[str], str]:
         """返回 (Key 列表, 来源说明)。插件配置优先，否则复用 AstrBot 网页搜索里的 Tavily Key。"""
         own = str(self.config.get("tavily_api_key", "") or "").strip()
         if own:
             return [own], "插件配置"
-        keys = self._builtin_web_search().get("websearch_tavily_key") or []
+        keys = self._builtin_web_search(umo).get("websearch_tavily_key") or []
         if isinstance(keys, str):
             keys = [keys]
         keys = [k.strip() for k in keys if isinstance(k, str) and k.strip()]
         return keys, ("复用 AstrBot 网页搜索的 Tavily Key" if keys else "")
 
-    def tavily_keys(self) -> list[str]:
-        return self.tavily_key_source()[0]
+    def tavily_keys(self, umo: str | None = None) -> list[str]:
+        return self.tavily_key_source(umo)[0]
 
-    def tavily_usable(self, names: list[str] | None = None) -> tuple[bool, str]:
+    def tavily_usable(
+        self, names: list[str] | None = None, umo: str | None = None
+    ) -> tuple[bool, str]:
         """本次请求要不要提供 deepdeep_tavily_search，以及不提供的原因。"""
         if not self.tavily_enabled:
             return False, "已在插件设置中关闭"
-        if not self.tavily.client.has_key():
+        keys = self.tavily_keys(umo)
+        if not keys:
             return False, "没有找到 Tavily API Key"
-        ps = self._builtin_web_search()
+        ps = self._builtin_web_search(umo)
         builtin = ps.get("web_search") and ps.get("websearch_provider") == "tavily"
         if builtin or (names and "web_search_tavily" in names):
             return False, "AstrBot 内置网页搜索已经是 Tavily，避免重复"
+        # 到达每月上限后整个月都不提供（工具列表在这个月内保持不变），下个月自动恢复
+        if self.tavily.limit_reached():
+            return False, f"本月 Tavily 调用已达上限（{self.tavily.usage_text()}）"
+        # 所有 Key 都无效或额度用完：暂停提供，换 Key、到期或重启后恢复
+        paused = self.tavily.paused(keys)
+        if paused:
+            return False, paused
         return True, ""
+
+    def model_searches(self) -> list[dict]:
+        """开启了内置联网搜索的对话模型（只读提供商配置）。"""
+        try:
+            providers = self.context.get_all_providers()
+        except Exception:  # noqa: BLE001
+            return []
+        default_id = ""
+        try:
+            using = self.context.get_using_provider()
+            default_id = str(
+                (getattr(using, "provider_config", None) or {}).get("id", "")
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return [m.to_dict() for m in model_search.scan(providers, default_id)]
 
     # ---------- 工具路由 ----------
 
@@ -210,10 +265,17 @@ class DeepSeekSearchPlugin(Star):
         if not toolset:
             return
         names = toolset.names()
+        umo = getattr(event, "unified_msg_origin", None)
         managed = any(n in OWN_TOOLS or n == TAVILY_TOOL for n in names)
-        # Tavily 不可用（关闭、没有 Key、内置网页搜索已经是 Tavily）时只在本次请求里拿掉
-        if TAVILY_TOOL in names and not self.tavily_usable(names)[0]:
+        # Tavily 不可用（关闭、没有 Key、内置网页搜索已经是 Tavily、本月已达上限、Key 都失效）时只在本次请求里拿掉
+        if TAVILY_TOOL in names and not self.tavily_usable(names, umo)[0]:
             toolset.remove_tool(TAVILY_TOOL)
+        # 其他搜索工具本月已达调用上限：同样只在本次请求里拿掉，下个月自动恢复
+        for name in self.tool_caps.blocked(names):
+            toolset.remove_tool(name)
+        # 搜索偏好里在所有场景都设为“不用”的工具
+        for name in self.router.disabled_tools(toolset.names()):
+            toolset.remove_tool(name)
         avail = self.service.availability("search")
         state = self.router.apply(toolset, avail.ok, req, avail.code)
         event.set_extra(ROUTING_EXTRA_KEY, state)
@@ -340,6 +402,24 @@ class DeepSeekSearchPlugin(Star):
             await self.recorder.on_end(id(event), tool, tool_result)
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"[deepdeep] 记录工具结果失败: {exc}")
+        try:
+            self._count_tool_use(tool, tool_result)
+        except Exception as exc:  # noqa: BLE001 - 计数失败不影响工具调用
+            logger.warning(f"[deepdeep] 记录工具用量失败: {exc}")
+
+    def _count_tool_use(self, tool, tool_result) -> None:
+        """给“其他搜索工具每月调用上限”计数：搜索类工具和设了上限的工具，成功的调用才算。
+        和调用日志无关（调用日志可能关闭，或只保留十几天）。"""
+        name = getattr(tool, "name", "")
+        if not name or name in OWN_TOOLS or name == TAVILY_TOOL:
+            return
+        if getattr(tool_result, "isError", False):
+            return
+        if self.router.search_category(name) is None and not self.tool_caps.rule_for(
+            name
+        ):
+            return
+        self.tool_caps.record(name)
 
     @filter.on_agent_done()
     async def record_agent_done(self, event: AstrMessageEvent, run_context, response):
@@ -396,24 +476,37 @@ class DeepSeekSearchPlugin(Star):
             query(string): 搜索关键词，用简洁的关键词，技术问题建议用英文
             count(number): 返回结果数，可不填，默认 5
         """
-        ok, why = self.tavily_usable()
+        if self.tavily.limit_reached():
+            # 路由从下一次请求起会拿掉这个工具；本次请求里已经提供了，就引导模型换工具
+            listed = "、".join(self._tavily_alternatives(event)[:3]) or OWN_TOOLS[0]
+            return (
+                f"本月 Tavily 调用已达上限（{self.tavily.usage_text()}），"
+                f"请改用 {listed} 继续完成任务。"
+            )
+        umo = getattr(event, "unified_msg_origin", None)
+        ok, why = self.tavily_usable(umo=umo)
         if not ok:
             return f"Tavily 搜索暂不可用：{why}。请改用其他搜索工具。"
-        outcome = await self.tavily.search(query, count)
+        outcome = await self.tavily.search(query, count, self.tavily_keys(umo))
         if not outcome.should_fallback:
             return outcome.text
-        state = event.get_extra(ROUTING_EXTRA_KEY)
-        names = state.toolset.names() if state is not None else []
-        alts = [n for n in names if n == OWN_TOOLS[0] and self.router.own_enabled]
-        alts += [
-            n for n in self.router.alternatives(names, "search") if n != TAVILY_TOOL
-        ]
+        alts = self._tavily_alternatives(event)
         if not alts:
             return outcome.text
         listed = "、".join(alts[:3])
         if outcome.reason == "empty":
             return f"{outcome.text}\n可以改用 {listed} 再搜一次。"
         return f"{outcome.text}\n请改用 {listed} 继续完成任务。"
+
+    def _tavily_alternatives(self, event: AstrMessageEvent) -> list[str]:
+        """Tavily 不能用时推荐的搜索工具：DeepDeep 在前，其余按备用顺序。"""
+        state = event.get_extra(ROUTING_EXTRA_KEY)
+        names = state.toolset.names() if state is not None else []
+        alts = [n for n in names if n == OWN_TOOLS[0] and self.router.own_enabled]
+        alts += [
+            n for n in self.router.alternatives(names, "search") if n != TAVILY_TOOL
+        ]
+        return alts
 
     # ---------- 管理命令 ----------
 

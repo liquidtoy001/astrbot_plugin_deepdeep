@@ -122,3 +122,42 @@ def test_build_sorts_problems_first_and_maps_tools():
         "deepdeep_tavily_search": "warn",
     }
     assert (result["missing"], result["warn"]) == (1, 1)
+
+
+def test_tavily_key_failure_is_a_warning_with_fix():
+    base = {"enabled": True, "configured": True, "usable": True, "source": "插件配置"}
+    bad = sc.check_tavily(
+        {**base, "last_failure": {"status": 401, "label": "Key 无效"}}
+    )
+    assert bad["status"] == "warn" and bad["key"] == "tavily:http_401"
+    assert "Key 无效（HTTP 401）" in bad["detail"]
+    assert (
+        bad["url"] == "https://app.tavily.com"
+        and "https://app.tavily.com" in bad["fix"]
+    )
+    quota = sc.check_tavily(
+        {**base, "last_failure": {"status": 432, "label": "额度用完"}}
+    )
+    assert quota["key"] == "tavily:http_432" and "额度用完" in quota["detail"]
+    assert "下个月" in quota["fix"] and "Tavily 每月调用上限" in quota["fix"]
+    result = sc.build(
+        deepseek=sc.check_deepseek(("k", "s"), True),
+        tavily=quota,
+        builtin=sc.check_builtin({"web_search": False}, BUILTIN_TOOLS),
+        plugins=[],
+    )
+    assert result["tool_status"] == {"deepdeep_tavily_search": "warn"}
+    # 没有失败记录时显示本月用量
+    ok = sc.check_tavily({**base, "usage_text": "本月 Tavily 已用 3 / 1000 次"})
+    assert ok["status"] == "ok" and ok["detail"].endswith(
+        "本月 Tavily 已用 3 / 1000 次"
+    )
+    # 达到自己设的上限只是说明
+    capped = sc.check_tavily(
+        {
+            **base,
+            "usable": False,
+            "reason": "本月 Tavily 调用已达上限（本月 Tavily 已用 5 / 5 次）",
+        }
+    )
+    assert capped["status"] == "info" and "已达上限" in capped["detail"]

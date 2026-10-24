@@ -107,6 +107,53 @@
     "inject_search_guide": {
       "description": "Tell the model which search tool does what",
       "hint": "Appends a short, stable guide listing only the tools available in the request."
+    },
+    "own_tools_enabled": {
+      "description": "Enable DeepDeep's own search and fetch",
+      "hint": "When off, deepdeep_web_search / deepdeep_web_fetch are removed from each request (AstrBot's tool switches are not touched) and other search tools take over; the guide, call log and health checks keep working."
+    },
+    "tavily_enabled": {
+      "description": "Enable DeepDeep's own Tavily search",
+      "hint": "Provides deepdeep_tavily_search, the first choice for technical questions (programming, versions, CVEs, official docs) and DeepSeek's first fallback. Reuses the Tavily key from AstrBot's web search settings, even when the built-in provider is something else. Not offered without a key or when the built-in provider already is Tavily."
+    },
+    "tavily_api_key": {
+      "description": "Tavily API key (optional)",
+      "hint": "Leave empty to reuse the Tavily key from AstrBot's web search settings."
+    },
+    "tavily_monthly_limit": {
+      "description": "Tavily monthly call cap",
+      "hint": "Counts successful deepdeep_tavily_search calls per calendar month (cache hits don't count). Once reached, the tool is not offered for the rest of the month and technical questions go to other search tools; it comes back next month. 0 = no cap. The Tavily free tier is 1000 calls a month; set it a bit lower if AstrBot's built-in Tavily search shares the key."
+    },
+    "tool_monthly_limits": {
+      "description": "Monthly call caps for other search tools",
+      "hint": "One per line: \"tool pattern = count\" (* wildcard), e.g. web_search_bocha = 500. Counts successful calls per calendar month (tools matching the same line are added up). Once reached, the tools are removed from each request for the rest of the month (AstrBot's tool switches are not touched). DeepDeep's own tools have their own limits."
+    },
+    "panel_language": {
+      "description": "Dashboard language",
+      "labels": [
+        "Follow AstrBot",
+        "中文",
+        "English"
+      ],
+      "hint": "Language of the plugin dashboard. \"Follow AstrBot\" uses the current language of the AstrBot dashboard."
+    },
+    "search_lane_rules": {
+      "description": "Routing by question type",
+      "hint": "One per line: \"question type = tool pattern, tool pattern\" (* wildcard). The first tool present in the request becomes the first choice for that type and is written into the guide; other questions still go to DeepDeep first."
+    },
+    "search_preference": {
+      "description": "Search preference",
+      "labels": [
+        "Recommended (by evaluation)",
+        "Save money",
+        "Chinese sources first",
+        "Custom"
+      ],
+      "hint": "Which search tool goes first for each kind of question. Recommended: the default order from the 2026-10 evaluation; Save money: self-hosted and free-tier tools first; Chinese sources first: tools with good Chinese coverage first; Custom: use \"Custom search order\" below. You can reorder directly on the dashboard's Settings page."
+    },
+    "search_order": {
+      "description": "Custom search order",
+      "hint": "Used when the search preference is \"Custom\". One per line: \"scene = tool pattern, tool pattern\"; scenes are general, tech and read. Earlier tools go first; prefix ! to not use one. Easier to set on the dashboard, which writes this for you."
     }
   },
   "views": {

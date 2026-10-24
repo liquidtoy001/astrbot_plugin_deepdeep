@@ -34,8 +34,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements-dev.txt
-      - run: pip install -r requirements-dev.txt
+          cache-dependency-path: tests/requirements.txt
+      - run: pip install -r tests/requirements.txt
       - run: python -m pytest -q
 
   compat:
@@ -64,7 +64,7 @@ jobs:
         id: check
         run: |
           set +e
-          bash scripts/compat_check.sh "${{ steps.version.outputs.tag }}" report.md
+          bash .github/scripts/compat_check.sh "${{ steps.version.outputs.tag }}" report.md
           code=$?
           echo "code=$code" >> "$GITHUB_OUTPUT"
           cat report.md >> "$GITHUB_STEP_SUMMARY"

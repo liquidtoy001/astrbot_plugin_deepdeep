@@ -111,3 +111,72 @@ class UsageStats:
             tmp.replace(self._path)
         except OSError as exc:
             logger.warning(f"[deepdeep] 保存统计文件失败: {exc}")
+
+
+KEEP_MONTHS = 3
+
+
+class MonthlyCounter:
+    """按自然月、按名称计数（比如 Tavily 或其他搜索工具每月成功调用的次数），保存在插件数据目录。
+
+    文件格式：{"2026-10": {"tavily": 123, "web_search_bocha": 4}, ...}，只保留最近 KEEP_MONTHS 个月。
+    """
+
+    def __init__(
+        self, path: Path | None, *, today: Callable[[], date] = date.today
+    ) -> None:
+        self._path = path
+        self._today = today
+        self._months: dict[str, dict[str, int]] = {}
+        self._load()
+
+    def _month(self) -> str:
+        return self._today().strftime("%Y-%m")
+
+    def count(self, key: str = "total") -> int:
+        """本月已记录的次数，跨月后自动从 0 开始。"""
+        return self._months.get(self._month(), {}).get(key, 0)
+
+    def counts(self) -> dict[str, int]:
+        """本月各名称的次数。"""
+        return dict(self._months.get(self._month(), {}))
+
+    def add(self, key: str = "total", n: int = 1) -> int:
+        month = self._months.setdefault(self._month(), {})
+        month[key] = month.get(key, 0) + n
+        for old in sorted(self._months)[:-KEEP_MONTHS]:
+            del self._months[old]
+        self._save()
+        return month[key]
+
+    def _load(self) -> None:
+        if self._path is None or not self._path.exists():
+            return
+        try:
+            data = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.warning(f"[deepdeep] 读取月度计数文件失败，将重新计数: {exc}")
+            return
+        if not isinstance(data, dict):
+            return
+        for month, values in data.items():
+            if not isinstance(values, dict):
+                continue
+            self._months[str(month)] = {
+                str(k): v
+                for k, v in values.items()
+                if isinstance(v, int) and not isinstance(v, bool)
+            }
+
+    def _save(self) -> None:
+        if self._path is None:
+            return
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._path.with_suffix(".tmp")
+            tmp.write_text(
+                json.dumps(self._months, ensure_ascii=False), encoding="utf-8"
+            )
+            tmp.replace(self._path)
+        except OSError as exc:
+            logger.warning(f"[deepdeep] 保存月度计数文件失败: {exc}")

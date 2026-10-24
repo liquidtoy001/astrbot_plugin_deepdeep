@@ -14,21 +14,24 @@
           <span class="muted" id="version"></span>
         </div>
         <div class="actions">
+          <select id="lang-select" class="inline-select" aria-label="面板语言">
+            <option value="auto">跟随 AstrBot</option>
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+          </select>
           <button type="button" id="btn-refresh" class="btn ghost">刷新</button>
           <button type="button" id="btn-reset" class="btn ghost" hidden>解除熔断</button>
           <button type="button" id="btn-test" class="btn">测试连接</button>
         </div>
       </header>
 
-      <nav class="navbar" id="navbar" aria-label="页面导航">
-        <a href="#sec-tools" data-target="sec-tools">主力工具</a>
-        <a href="#sec-cost" data-target="sec-cost">费用</a>
-        <a href="#sec-usage" data-target="sec-usage">工具用量</a>
-        <a href="#sec-network" data-target="sec-network">网络</a>
-        <a href="#sec-settings" data-target="sec-settings">设置</a>
-        <a href="#sec-routing" data-target="sec-routing">路由预览</a>
-        <a href="#sec-calls" data-target="sec-calls">调用日志</a>
-        <a href="#sec-diag" data-target="sec-diag">诊断</a>
+      <!-- 页面切换只是显示 / 隐藏，不重新加载 iframe；每页的数据第一次打开时才加载 -->
+      <nav class="navbar" id="navbar" role="tablist" aria-label="页面">
+        <button type="button" role="tab" data-page="overview">概览</button>
+        <button type="button" role="tab" data-page="usage">用量</button>
+        <button type="button" role="tab" data-page="calls">调用日志</button>
+        <button type="button" role="tab" data-page="settings">设置</button>
+        <button type="button" role="tab" data-page="tools">工具与诊断</button>
       </nav>
 
       <section class="banner" id="banner" role="status">
@@ -41,293 +44,369 @@
 
       <div class="toast" id="toast" role="alert" hidden></div>
 
-      <section class="card" id="sec-tools">
-        <div class="card-head">
-          <h2>主力搜索工具</h2>
-          <span class="muted small">每类需求先用谁、不理想时换谁（与告诉模型的分工说明一致）· 健康状况按近 24 小时的调用判断，只做提示</span>
-        </div>
+      <!-- ========== 概览 ========== -->
+      <div class="view" data-page="overview" role="tabpanel">
         <div class="setup-box" id="setup-box" hidden></div>
-        <div class="health-alert" id="health-alert" hidden></div>
-        <div class="lanes" id="lanes"></div>
-        <details class="handled" id="handled" hidden>
-          <summary class="muted small" id="handled-summary">已处理</summary>
-          <div id="handled-body"></div>
-        </details>
-      </section>
 
-      <section class="stats" id="sec-cost">
-        <article class="card stat">
-          <div class="label">今日费用</div>
-          <div class="value"><span id="today-cost">–</span><span class="cny" id="today-cost-cny"></span></div>
-          <div class="meter"><span id="today-meter"></span></div>
-          <div class="muted small" id="today-limit"></div>
-        </article>
-        <article class="card stat">
-          <div class="label">本月费用</div>
-          <div class="value"><span id="month-cost">–</span><span class="cny" id="month-cost-cny"></span></div>
-          <div class="meter"><span id="month-meter"></span></div>
-          <div class="muted small" id="month-limit"></div>
-        </article>
-        <article class="card stat">
-          <div class="label">今日搜索</div>
-          <div class="value" id="today-search">–</div>
-          <div class="muted small" id="today-search-detail"></div>
-        </article>
-        <article class="card stat">
-          <div class="label">今日抓取</div>
-          <div class="value" id="today-fetch">–</div>
-          <div class="muted small" id="today-fetch-detail"></div>
-        </article>
-      </section>
+        <section class="stats" id="sec-cost">
+          <article class="card stat">
+            <div class="label">今日费用</div>
+            <div class="value"><span id="today-cost">–</span><span class="cny" id="today-cost-cny"></span></div>
+            <div class="meter"><span id="today-meter"></span></div>
+            <div class="muted small" id="today-limit"></div>
+          </article>
+          <article class="card stat">
+            <div class="label">本月费用</div>
+            <div class="value"><span id="month-cost">–</span><span class="cny" id="month-cost-cny"></span></div>
+            <div class="meter"><span id="month-meter"></span></div>
+            <div class="muted small" id="month-limit"></div>
+          </article>
+          <article class="card stat">
+            <div class="label">今日搜索</div>
+            <div class="value" id="today-search">–</div>
+            <div class="muted small" id="today-search-detail"></div>
+          </article>
+          <article class="card stat">
+            <div class="label">今日抓取</div>
+            <div class="value" id="today-fetch">–</div>
+            <div class="muted small" id="today-fetch-detail"></div>
+          </article>
+        </section>
 
-      <section class="card" id="sec-chart">
-        <div class="card-head">
-          <h2>近 30 天计费次数</h2>
-          <div class="legend">
-            <span><i class="swatch search"></i>搜索</span>
-            <span><i class="swatch fetch"></i>抓取</span>
+        <section class="card" id="sec-tools">
+          <div class="card-head">
+            <h2>主力搜索工具</h2>
+            <span class="muted small">每类问题先用谁、不理想时换谁（和告诉模型的分工说明一致）· 健康状况按近 24 小时的调用判断，只做提示</span>
           </div>
-        </div>
-        <div id="chart" class="chart"></div>
-        <div class="muted small" id="chart-summary"></div>
-      </section>
-
-      <section class="card" id="sec-usage">
-        <div class="card-head">
-          <h2>各搜索工具用量</h2>
-          <select id="stats-range" aria-label="统计范围" class="inline-select">
-            <option value="24h" selected>近 24 小时</option>
-            <option value="7d">近 7 天</option>
-            <option value="30d">近 30 天</option>
-            <option value="all">全部</option>
-          </select>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>工具</th><th>来源</th><th>类型</th><th>健康</th><th>调用</th><th>成功率</th><th>失败</th><th>拦截</th><th>平均耗时</th><th>最近一次</th></tr>
-            </thead>
-            <tbody id="stats-body"></tbody>
-          </table>
-        </div>
-        <div class="muted small" id="stats-note"></div>
-      </section>
-
-      <section class="card" id="sec-network">
-        <div class="card-head">
-          <h2>网络连通性</h2>
-          <button type="button" id="btn-net" class="btn ghost">检测连通性</button>
-        </div>
-        <p class="muted small intro">
-          <b>云端 API</b>：搜索在服务商的服务器上完成，你的服务器只要连得上它的接口，国内外网站能不能搜到取决于服务商。
-          <b>自建服务（内网）</b>：比如 SearXNG，请求从你的服务器发往各搜索引擎，服务器访问不了、或者服务器 IP 被拦截（验证码、限流）的引擎就没有结果。
-          检测只打开几个网站首页和接口地址、查一次 SearXNG，不调用计费接口。
-        </p>
-        <div class="net-summary" id="net-summary" hidden></div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>后端</th><th>运行方式 / 接口</th><th>能搜到</th><th>实测</th><th>说明</th></tr>
-            </thead>
-            <tbody id="net-body"></tbody>
-          </table>
-        </div>
-        <div class="searxng-box" id="searxng-box" hidden></div>
-      </section>
-
-      <section class="card" id="sec-settings">
-        <div class="card-head">
-          <h2>设置</h2>
-          <span class="save-state small" id="save-state" role="status">修改后自动保存</span>
-        </div>
-        <form id="settings" class="settings" autocomplete="off">
-          <label class="switch-row">
-            <input type="checkbox" name="own_tools_enabled" />
-            <span>
-              <strong>启用 DeepDeep 自带的 DeepSeek 搜索和抓取</strong>
-              <em>关闭后不再向模型提供 deepdeep_web_search / deepdeep_web_fetch（只在每次请求里拿掉，不改 AstrBot 的工具开关），改由其他搜索工具负责；分工说明、调用日志和健康检测照常工作</em>
-            </span>
-          </label>
-          <label class="switch-row">
-            <input type="checkbox" name="tavily_enabled" />
-            <span>
-              <strong>启用 DeepDeep 自带的 Tavily 搜索</strong>
-              <em>提供 deepdeep_tavily_search，负责编程、软件版本、安全漏洞、官方文档等技术问题，也是 DeepSeek 的第一备用。Key 复用 AstrBot「网页搜索」里的 Tavily Key，内置网页搜索选了别家也能同时用</em>
-              <em id="tavily-info"></em>
-            </span>
-          </label>
-
-          <div class="grid2 basic">
-            <label class="field">
-              <span>路由模式</span>
-              <select name="routing_mode">
-                <option value="guide_only">只引导（推荐）</option>
-                <option value="deepseek_first">DeepSeek 优先</option>
-                <option value="deepseek_only">只用 DeepSeek</option>
-                <option value="fallback_only">暂停 DeepSeek</option>
-                <option value="coexist">不干预</option>
-              </select>
-              <em id="mode-hint"></em>
-            </label>
-            <label class="field">
-              <span>计费币种</span>
-              <select name="billing_currency">
-                <option value="cny">人民币（中国站，每千次 ¥5）</option>
-                <option value="usd">美元（国际站，每千次 $0.75）</option>
-              </select>
-              <em>按你的 DeepSeek 账户选择，费用和上限都按它计算</em>
-            </label>
-            <label class="field">
-              <span>每日费用上限（<b class="cur-symbol">¥</b>）</span>
-              <input type="number" name="daily_budget" min="0" step="0.01" />
-              <em id="daily-hint">0 表示不限制</em>
-            </label>
-            <label class="field">
-              <span>每月费用上限（<b class="cur-symbol">¥</b>）</span>
-              <input type="number" name="monthly_budget" min="0" step="0.1" />
-              <em id="monthly-hint">按自然月统计，0 表示不限制</em>
-            </label>
-          </div>
-          <div class="muted small" id="key-info"></div>
-
-          <details class="advanced" id="advanced">
-            <summary><strong>高级设置</strong> <span class="muted small">汇率、熔断、工具匹配规则、分工规则、调用日志</span></summary>
-            <div class="advanced-body">
-              <div class="grid2">
-                <label class="field">
-                  <span>汇率（1 美元 = ? 元）</span>
-                  <input type="number" name="exchange_rate" min="0" max="100" step="0.01" />
-                  <em>只用于换算显示另一种币种，0 表示不显示</em>
-                </label>
-                <label class="field">
-                  <span>熔断阈值（连续失败次数）</span>
-                  <input type="number" name="circuit_threshold" min="1" max="50" step="1" />
-                </label>
-                <label class="field">
-                  <span>熔断冷却（秒）</span>
-                  <input type="number" name="circuit_cooldown_seconds" min="10" step="10" />
-                </label>
-              </div>
-              <div class="grid2">
-                <label class="field">
-                  <span>可互相替代的通用搜索（每行一个规则，支持 *）</span>
-                  <textarea name="fallback_tool_patterns" rows="6" spellcheck="false"></textarea>
-                </label>
-                <label class="field">
-                  <span>搜索分工规则（每行：工具名规则 = 擅长什么）</span>
-                  <textarea name="specialist_rules" rows="8" spellcheck="false"></textarea>
-                  <em>匹配的工具视为专用搜索：始终保留，并告诉模型它擅长什么。改完后下方“工具路由预览”会自动更新</em>
-                </label>
-              </div>
-
-              <label class="field">
-                <span>按问题类型分工（每行：问题类型 = 工具名规则, 工具名规则）</span>
-                <textarea name="search_lane_rules" rows="3" spellcheck="false"></textarea>
-                <em>本次请求里第一个存在的工具作为这类问题的首选，写进分工说明；其余问题仍先用 DeepDeep。评测里“技术问题先用 Tavily”让结果质量从 7.2 提高到 8.4（满分 10）</em>
-              </label>
-
-              <label class="check">
-                <input type="checkbox" name="inject_search_guide" />
-                <span>每次请求向模型说明搜索工具分工（只列出本次可用的工具）</span>
-              </label>
-
-              <fieldset class="checks">
-                <legend>调用日志</legend>
-                <label class="check">
-                  <input type="checkbox" name="call_log_enabled" />
-                  <span>记录所有工具的调用（保存在插件数据目录，重启不丢）</span>
-                </label>
-                <label class="check">
-                  <input type="checkbox" name="record_queries" />
-                  <span>记录 DeepSeek 的搜索词、链接和返回结果</span>
-                </label>
-                <label class="check">
-                  <input type="checkbox" name="call_log_record_other_content" />
-                  <span>记录其他工具的完整参数和结果（可能包含聊天内容，默认只记工具名、耗时和状态）</span>
-                </label>
-                <label class="field inline">
-                  <span>保留天数</span>
-                  <input type="number" name="call_log_retention_days" min="1" max="365" step="1" />
-                </label>
-              </fieldset>
-            </div>
+          <div class="health-alert" id="health-alert" hidden></div>
+          <div class="lanes" id="lanes"></div>
+          <details class="handled" id="handled" hidden>
+            <summary class="muted small" id="handled-summary">已处理</summary>
+            <div id="handled-body"></div>
           </details>
+        </section>
+
+        <section class="card" id="sec-models">
+          <div class="card-head">
+            <h2>对话模型内置的联网搜索</h2>
+            <span class="muted small">有些对话模型自己会联网搜索（比如 Gemini 原生搜索）。这部分搜索不经过工具，DeepDeep 看不到，也不计入费用和调用日志</span>
+          </div>
+          <div id="models-body"></div>
+        </section>
+      </div>
+
+      <!-- ========== 用量 ========== -->
+      <div class="view" data-page="usage" role="tabpanel" hidden>
+        <section class="card" id="sec-chart">
+          <div class="card-head">
+            <h2>近 30 天 DeepSeek 计费次数</h2>
+            <div class="legend">
+              <span><i class="swatch search"></i>搜索</span>
+              <span><i class="swatch fetch"></i>抓取</span>
+            </div>
+          </div>
+          <div id="chart" class="chart"></div>
+          <div class="muted small" id="chart-summary"></div>
+        </section>
+
+        <section class="card" id="sec-caps" hidden>
+          <div class="card-head">
+            <h2>本月调用上限</h2>
+            <span class="muted small">在「设置 → 高级设置」里设置；达到上限后本月不再提供，下个月自动恢复</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>工具</th><th>本月已用</th><th>上限</th><th>状态</th></tr>
+              </thead>
+              <tbody id="caps-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card" id="sec-usage">
+          <div class="card-head">
+            <h2>各搜索工具用量</h2>
+            <select id="stats-range" aria-label="统计范围" class="inline-select">
+              <option value="24h" selected>近 24 小时</option>
+              <option value="7d">近 7 天</option>
+              <option value="30d">近 30 天</option>
+              <option value="all">全部</option>
+            </select>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>工具</th><th>来源</th><th>类型</th><th>健康</th><th>调用</th><th>成功率</th><th>失败</th><th>拦截</th><th>平均耗时</th><th>最近一次</th></tr>
+              </thead>
+              <tbody id="stats-body"></tbody>
+            </table>
+          </div>
+          <div class="muted small" id="stats-note"></div>
+        </section>
+      </div>
+
+      <!-- ========== 调用日志 ========== -->
+      <div class="view" data-page="calls" role="tabpanel" hidden>
+        <section class="card" id="sec-calls">
+          <div class="card-head">
+            <h2>调用日志</h2>
+            <span class="muted small" id="calls-summary">所有工具的调用记录 · 点击一行查看详情</span>
+          </div>
+          <form id="call-filters" class="filters" autocomplete="off">
+            <select name="range" aria-label="时间范围">
+              <option value="1h">近 1 小时</option>
+              <option value="24h" selected>近 24 小时</option>
+              <option value="7d">近 7 天</option>
+              <option value="14d">近 14 天</option>
+              <option value="">全部</option>
+            </select>
+            <select name="source" aria-label="来源"><option value="">全部来源</option></select>
+            <select name="tool" aria-label="工具"><option value="">全部工具</option></select>
+            <select name="status" aria-label="结果">
+              <option value="">全部结果</option>
+              <option value="problems">只看问题</option>
+              <option value="ok">成功</option>
+              <option value="error">失败</option>
+              <option value="blocked">已拦截</option>
+              <option value="empty">无结果</option>
+              <option value="cache_hit">缓存</option>
+              <option value="interrupted">中断</option>
+            </select>
+            <input type="search" name="q" placeholder="关键词或请求 ID" aria-label="关键词" />
+            <button type="submit" class="btn ghost">筛选</button>
+            <span class="spacer"></span>
+            <button type="button" id="btn-export" class="btn ghost">导出</button>
+            <button type="button" id="btn-clear" class="btn ghost danger">清空</button>
+          </form>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>时间</th><th>工具</th><th>来源</th><th>结果</th><th>耗时</th><th>说明</th></tr>
+              </thead>
+              <tbody id="calls-body"></tbody>
+            </table>
+          </div>
+          <div class="pager">
+            <button type="button" id="btn-prev" class="btn ghost">上一页</button>
+            <span class="muted small" id="page-info"></span>
+            <button type="button" id="btn-next" class="btn ghost">下一页</button>
+          </div>
+        </section>
+      </div>
+
+      <!-- ========== 设置 ========== -->
+      <div class="view" data-page="settings" role="tabpanel" hidden>
+        <form id="settings" class="settings-stack" autocomplete="off">
+        <section class="card settings" id="sec-settings">
+          <div class="card-head">
+            <h2>设置</h2>
+            <span class="save-state small" id="save-state" role="status">修改后自动保存</span>
+          </div>
+            <p class="muted small intro">一般只需要看这几项，默认值就能用。其余的都在最下面的「高级设置」里。</p>
+            <label class="switch-row">
+              <input type="checkbox" name="own_tools_enabled" />
+              <span>
+                <strong>启用 DeepSeek 搜索</strong>
+                <em>DeepDeep 的主力搜索，按次计费。关闭后由其他搜索工具负责</em>
+              </span>
+            </label>
+            <label class="switch-row">
+              <input type="checkbox" name="tavily_enabled" />
+              <span>
+                <strong>启用 Tavily 搜索</strong>
+                <em>专门负责编程、软件版本、官方文档等技术问题。自动使用 AstrBot「网页搜索」里填的 Tavily Key，免费额度每月 1000 次</em>
+                <em id="tavily-info"></em>
+              </span>
+            </label>
+
+            <div class="grid2 basic">
+              <label class="field">
+                <span>计费币种</span>
+                <select name="billing_currency">
+                  <option value="cny">人民币（中国站，每千次 ¥5）</option>
+                  <option value="usd">美元（国际站，每千次 $0.75）</option>
+                </select>
+                <em>按你的 DeepSeek 账户选择</em>
+              </label>
+              <label class="field">
+                <span>每月费用上限（<b class="cur-symbol">¥</b>）</span>
+                <input type="number" name="monthly_budget" min="0" step="0.1" />
+                <em id="monthly-hint">按自然月统计，0 表示不限制</em>
+              </label>
+            </div>
+            <div class="muted small" id="key-info"></div>
+        </section>
+
+        <section class="card" id="sec-pref">
+          <div class="card-head">
+            <h2>搜索偏好</h2>
+            <span class="save-state small" id="pref-state" role="status"></span>
+          </div>
+          <p class="muted small intro">排在前面的先用，不理想时往下换。选一个预设，或者自己调顺序。</p>
+          <div class="pref-chips" id="pref-presets" role="group" aria-label="预设"></div>
+          <div class="pref-chips scenes" id="pref-scenes" role="group" aria-label="场景"></div>
+          <ol class="pref-list" id="pref-list"></ol>
+          <div class="pref-preview" id="pref-preview"></div>
+          <p class="muted small" id="pref-note">改动后，下一次对话的提示词缓存会失效一次。</p>
+        </section>
+
+        <section class="card" id="sec-catalog">
+          <div class="card-head">
+            <h2>可用的搜索工具</h2>
+            <span class="muted small">DeepDeep 认识的搜索工具、各自擅长什么和现在的状态</span>
+          </div>
+          <ul class="catalog-list" id="catalog-top"></ul>
+          <details class="catalog-more" id="catalog-more" hidden>
+            <summary class="muted small" id="catalog-more-summary">其余</summary>
+            <ul class="catalog-list" id="catalog-rest"></ul>
+          </details>
+        </section>
+
+        <section class="card">
+            <details class="advanced" id="advanced">
+              <summary><strong>高级设置</strong> <span class="muted small">路由模式、每日上限、调用上限、熔断、工具规则、调用日志</span></summary>
+              <div class="advanced-body">
+                <div class="grid2">
+                  <label class="field">
+                    <span>路由模式</span>
+                    <select name="routing_mode">
+                      <option value="guide_only">只引导（推荐）</option>
+                      <option value="deepseek_first">DeepSeek 优先</option>
+                      <option value="deepseek_only">只用 DeepSeek</option>
+                      <option value="fallback_only">暂停 DeepSeek</option>
+                      <option value="coexist">不干预</option>
+                    </select>
+                    <em id="mode-hint"></em>
+                  </label>
+                  <label class="field">
+                    <span>每日费用上限（<b class="cur-symbol">¥</b>）</span>
+                    <input type="number" name="daily_budget" min="0" step="0.01" />
+                    <em id="daily-hint">0 表示不限制</em>
+                  </label>
+                  <label class="field">
+                    <span>汇率（1 美元 = ? 元）</span>
+                    <input type="number" name="exchange_rate" min="0" max="100" step="0.01" />
+                    <em>只用于换算显示另一种币种，0 表示不显示</em>
+                  </label>
+                  <label class="field">
+                    <span>Tavily 每月调用上限（次）</span>
+                    <input type="number" name="tavily_monthly_limit" min="0" max="1000000" step="1" />
+                    <em>按自然月统计成功的调用，缓存命中不算；达到上限后本月不再提供 Tavily，技术问题改由其他搜索负责，下个月自动恢复。0 表示不限制</em>
+                  </label>
+                  <label class="field">
+                    <span>熔断阈值（连续失败次数）</span>
+                    <input type="number" name="circuit_threshold" min="1" max="50" step="1" />
+                  </label>
+                  <label class="field">
+                    <span>熔断冷却（秒）</span>
+                    <input type="number" name="circuit_cooldown_seconds" min="10" step="10" />
+                  </label>
+                </div>
+
+                <label class="field">
+                  <span>其他搜索工具每月调用上限（每行：工具名规则 = 次数）</span>
+                  <textarea name="tool_monthly_limits" rows="3" spellcheck="false" placeholder="web_search_bocha = 500"></textarea>
+                  <em>给博查、Brave、Exa 等付费搜索设上限，支持 * 通配；一行匹配多个工具时合计。达到上限后本月不再提供这些工具（不改 AstrBot 的工具开关），下个月自动恢复。用量在「用量」页查看</em>
+                </label>
+
+                <div class="grid2">
+                  <label class="field">
+                    <span>可互相替代的通用搜索（每行一个规则，支持 *）</span>
+                    <textarea name="fallback_tool_patterns" rows="6" spellcheck="false"></textarea>
+                  </label>
+                  <label class="field">
+                    <span>搜索分工规则（每行：工具名规则 = 擅长什么）</span>
+                    <textarea name="specialist_rules" rows="8" spellcheck="false"></textarea>
+                    <em>匹配的工具视为专用搜索：始终保留，并告诉模型它擅长什么。效果可以在「工具与诊断 → 工具路由预览」里看</em>
+                  </label>
+                </div>
+
+                <label class="field">
+                  <span>按问题类型分工（每行：问题类型 = 工具名规则, 工具名规则）</span>
+                  <textarea name="search_lane_rules" rows="3" spellcheck="false"></textarea>
+                  <em>本次请求里第一个存在的工具作为这类问题的首选，写进分工说明；其余问题仍先用 DeepDeep</em>
+                </label>
+
+                <label class="check">
+                  <input type="checkbox" name="inject_search_guide" />
+                  <span>每次请求向模型说明搜索工具分工（只列出本次可用的工具）</span>
+                </label>
+
+                <fieldset class="checks">
+                  <legend>调用日志</legend>
+                  <label class="check">
+                    <input type="checkbox" name="call_log_enabled" />
+                    <span>记录所有工具的调用（保存在插件数据目录，重启不丢）</span>
+                  </label>
+                  <label class="check">
+                    <input type="checkbox" name="record_queries" />
+                    <span>记录 DeepSeek 的搜索词、链接和返回结果</span>
+                  </label>
+                  <label class="check">
+                    <input type="checkbox" name="call_log_record_other_content" />
+                    <span>记录其他工具的完整参数和结果（可能包含聊天内容，默认只记工具名、耗时和状态）</span>
+                  </label>
+                  <label class="field inline">
+                    <span>保留天数</span>
+                    <input type="number" name="call_log_retention_days" min="1" max="365" step="1" />
+                  </label>
+                </fieldset>
+              </div>
+            </details>
+        </section>
         </form>
-      </section>
+      </div>
 
-      <section class="card" id="sec-routing">
-        <div class="card-head">
-          <h2>工具路由预览</h2>
-          <span class="muted small" id="tools-note">当前已注册的工具，以及它们在不同情况下是否对模型可见。超出预算时，同样走 DeepSeek 计费的工具不会作为备用</span>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>工具</th><th>类型</th><th>DeepSeek 正常时</th><th>DeepSeek 故障时</th><th>超出预算时</th></tr>
-            </thead>
-            <tbody id="tools-body"></tbody>
-          </table>
-        </div>
-        <button type="button" id="btn-tools-more" class="btn ghost more-btn" hidden></button>
-      </section>
+      <!-- ========== 工具与诊断 ========== -->
+      <div class="view" data-page="tools" role="tabpanel" hidden>
+        <section class="card" id="sec-routing">
+          <div class="card-head">
+            <h2>工具路由预览</h2>
+            <span class="muted small" id="tools-note">当前已注册的工具，以及它们在不同情况下是否对模型可见。超出预算时，同样走 DeepSeek 计费的工具不会作为备用</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>工具</th><th>类型</th><th>DeepSeek 正常时</th><th>DeepSeek 故障时</th><th>超出预算时</th></tr>
+              </thead>
+              <tbody id="tools-body"></tbody>
+            </table>
+          </div>
+          <button type="button" id="btn-tools-more" class="btn ghost more-btn" hidden></button>
+        </section>
 
-      <section class="card" id="sec-calls">
-        <div class="card-head">
-          <h2>调用日志</h2>
-          <span class="muted small" id="calls-summary">所有工具的调用记录 · 点击一行查看详情</span>
-        </div>
-        <form id="call-filters" class="filters" autocomplete="off">
-          <select name="range" aria-label="时间范围">
-            <option value="1h">近 1 小时</option>
-            <option value="24h" selected>近 24 小时</option>
-            <option value="7d">近 7 天</option>
-            <option value="14d">近 14 天</option>
-            <option value="">全部</option>
-          </select>
-          <select name="source" aria-label="来源"><option value="">全部来源</option></select>
-          <select name="tool" aria-label="工具"><option value="">全部工具</option></select>
-          <select name="status" aria-label="结果">
-            <option value="">全部结果</option>
-            <option value="problems">只看问题</option>
-            <option value="ok">成功</option>
-            <option value="error">失败</option>
-            <option value="blocked">已拦截</option>
-            <option value="empty">无结果</option>
-            <option value="cache_hit">缓存</option>
-            <option value="interrupted">中断</option>
-          </select>
-          <input type="search" name="q" placeholder="关键词或请求 ID" aria-label="关键词" />
-          <button type="submit" class="btn ghost">筛选</button>
-          <span class="spacer"></span>
-          <button type="button" id="btn-export" class="btn ghost">导出</button>
-          <button type="button" id="btn-clear" class="btn ghost danger">清空</button>
-        </form>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>时间</th><th>工具</th><th>来源</th><th>结果</th><th>耗时</th><th>说明</th></tr>
-            </thead>
-            <tbody id="calls-body"></tbody>
-          </table>
-        </div>
-        <div class="pager">
-          <button type="button" id="btn-prev" class="btn ghost">上一页</button>
-          <span class="muted small" id="page-info"></span>
-          <button type="button" id="btn-next" class="btn ghost">下一页</button>
-        </div>
-      </section>
+        <section class="card" id="sec-network">
+          <div class="card-head">
+            <h2>网络连通性</h2>
+            <button type="button" id="btn-net" class="btn ghost">检测连通性</button>
+          </div>
+          <p class="muted small intro">云端 API 的搜索在服务商的服务器上完成，你的服务器只要连得上它的接口；自建服务（比如 SearXNG）从你的服务器直接访问各搜索引擎，服务器访问不了、或 IP 被拦截的引擎就没有结果。检测只打开几个网站首页和接口地址、查一次 SearXNG，不调用计费接口。</p>
+          <div class="net-summary" id="net-summary" hidden></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>后端</th><th>运行方式 / 接口</th><th>能搜到</th><th>实测</th><th>说明</th></tr>
+              </thead>
+              <tbody id="net-body"></tbody>
+            </table>
+          </div>
+          <div class="searxng-box" id="searxng-box" hidden></div>
+        </section>
 
-      <section class="card" id="sec-diag">
-        <div class="card-head">
-          <h2>诊断信息</h2>
-          <span class="muted small">反馈问题时附上：包含版本、配置摘要、当前状态和最近的失败记录，不含 API Key</span>
-        </div>
-        <div class="form-actions start">
-          <button type="button" id="btn-diag" class="btn ghost">生成诊断信息</button>
-          <button type="button" id="btn-diag-copy" class="btn ghost" hidden>复制</button>
-        </div>
-        <textarea id="diag" class="diag" rows="14" readonly hidden spellcheck="false"></textarea>
-      </section>
+        <section class="card" id="sec-diag">
+          <div class="card-head">
+            <h2>诊断信息</h2>
+            <span class="muted small">反馈问题时附上：包含版本、配置摘要、当前状态和最近的失败记录，不含 API Key</span>
+          </div>
+          <div class="form-actions start">
+            <button type="button" id="btn-diag" class="btn ghost">生成诊断信息</button>
+            <button type="button" id="btn-diag-copy" class="btn ghost" hidden>复制</button>
+          </div>
+          <textarea id="diag" class="diag" rows="14" readonly hidden spellcheck="false"></textarea>
+        </section>
+      </div>
+
       <footer class="about">
         <div>
           <strong>DeepDeep</strong> <span class="muted" id="about-version"></span> · MIT ·
@@ -337,11 +416,11 @@
           <code id="repo-url">https://github.com/liquidtoy001/astrbot_plugin_deepdeep</code>
           <button type="button" id="btn-copy-repo" class="btn ghost small-btn">复制链接</button>
         </div>
-        <div class="muted small">
-          插件面板运行在 AstrBot 的安全沙箱里，不能直接打开外部网页。可以在 AstrBot「插件」页打开本插件的详情，点击仓库地址前往 GitHub；问题反馈也在那里提交。
-        </div>
+        <div class="muted small">插件面板运行在 AstrBot 的安全沙箱里，不能直接打开外部网页。可以在 AstrBot「插件」页打开本插件的详情，点击仓库地址前往 GitHub；问题反馈也在那里提交。</div>
       </footer>
     </main>
+    <!-- 词典用普通脚本加载：4.26–4.28 只给 HTML 里的资源地址带上访问令牌，模块里的相对 import 可能拿不到 -->
+    <script src="./i18n.js"></script>
     <script type="module" src="./app.js"></script>
   </body>
 </html>

@@ -4,9 +4,9 @@
 
 # DeepDeep
 
-**简体中文** | [English](README_EN.md)
+**简体中文** | [English](docs/README_EN.md)
 
-AstrBot 搜索管理器：让 DeepSeek 搜索、AstrBot 内置网页搜索和各种搜索插件**分工协作**，自带自动降级、费用上限、用量统计和调用日志
+AstrBot 搜索管理器：让 DeepSeek 搜索、Tavily、AstrBot 内置网页搜索和各种搜索插件**分工协作**，自带搜索偏好、自动降级、费用和调用上限、用量统计和调用日志
 
 [![CI](https://github.com/liquidtoy001/astrbot_plugin_deepdeep/actions/workflows/ci.yml/badge.svg)](https://github.com/liquidtoy001/astrbot_plugin_deepdeep/actions/workflows/ci.yml)
 ![AstrBot](https://img.shields.io/badge/AstrBot-%E2%89%A54.26.0-blue)
@@ -20,12 +20,14 @@ AstrBot 搜索管理器：让 DeepSeek 搜索、AstrBot 内置网页搜索和各
 
 DeepDeep 把这些搜索工具**管起来**：
 
-- **分工**：通用搜索交给最合适的一个，图片、视频、学术、GitHub 等交给各自的专用工具，并在每次请求里告诉模型谁擅长什么
+- **分工**：通用搜索交给最合适的一个，技术问题交给 Tavily，图片、视频、学术、GitHub 等交给各自的专用工具，并在每次请求里告诉模型谁擅长什么
+- **搜索偏好**：不想用默认顺序的话，选个预设（推荐、省钱优先、中文资料优先），或者按“一般问题 / 技术问题 / 读取网页”自己排先用谁、不用谁
+- **工具一览**：列出 DeepDeep 认识的所有搜索工具，各自擅长什么、花不花钱、现在能不能用，没配好时告诉你去哪里填；对话模型自带联网搜索（比如 Gemini 原生搜索）时也会提醒
 - **路由与降级**：默认不隐藏任何工具，只告诉模型通用搜索先用谁、没搜到或结果不好再换谁；DeepSeek 没有 Key、超出预算、故障或单次调用失败时，引导模型改用其他搜索工具，同一轮对话里就能接着搜
-- **费用控制**：人民币 / 美元计费，日 / 月费用上限；超出上限时不会悄悄改用同样走 DeepSeek 计费的工具
+- **费用控制**：人民币 / 美元计费，日 / 月费用上限；超出上限时不会悄悄改用同样走 DeepSeek 计费的工具。Tavily 和其他付费搜索可以设每月调用次数上限，用完当月自动停用
 - **用量统计**：每个搜索工具的调用次数、成功率、失败、平均耗时
 - **调用日志**：记录**所有工具**的每次调用，持久保存、可筛选、可导出，排查问题有据可查
-- **可视化面板**：在 AstrBot WebUI 里查看和修改上述一切，保存即生效
+- **可视化面板**：在 AstrBot WebUI 里查看和修改上述一切，保存即生效；支持中文和英文
 - **零额外依赖**，只用 AstrBot 自带的库
 
 > **关于 AstrBot 内置的 DeepSeek 搜索**：AstrBot 4.29.1 起在“网页搜索”里内置了 DeepSeek 搜索服务。如果只需要基础的 DeepSeek 搜索，用内置的就够了。DeepDeep 适合同时用多个搜索工具、需要自动降级、费用控制、统计和日志的场景；它的搜索结果还会带上发布日期、相关度和权威度，便于模型判断信息新旧（内置版本只返回标题、链接和摘要）。两者可以同时开启，DeepDeep 会把内置的 DeepSeek 搜索当作备用。
@@ -156,7 +158,7 @@ https://github.com/liquidtoy001/astrbot_plugin_deepdeep
 |---|---|
 | `deepdeep_web_search(query, count)` | 通过 [DeepSeek Search API](https://api-docs.deepseek.com/zh-cn/guides/search) 联网搜索。每条结果带长摘要、发布日期、相关度和权威度；支持 `site:`、`-site:`、`"精确短语"`、`lang:zh,en`、`after:2026-01-01`、`before:2026-06` 等语法 |
 | `deepdeep_web_fetch(url)` | 通过 DeepSeek Fetch API 读取网页全文（Markdown） |
-| `deepdeep_tavily_search(query, count)` | 通过 Tavily 搜索，负责技术类问题，也是 DeepSeek 的第一备用。Key 默认复用 AstrBot「网页搜索」里的 Tavily Key（内置网页搜索选了别家也能用）；没有 Key、或内置网页搜索本身就是 Tavily 时自动不提供。Tavily 免费额度每月 1000 次 |
+| `deepdeep_tavily_search(query, count)` | 通过 Tavily 搜索，负责技术类问题，也是 DeepSeek 的第一备用。Key 默认复用 AstrBot「网页搜索」里的 Tavily Key（内置网页搜索选了别家也能用）；没有 Key、或内置网页搜索本身就是 Tavily 时自动不提供。Tavily 免费额度每月 1000 次，可在「高级设置」里设每月调用上限，用完后当月不再提供 |
 
 工具结果第一行是统一的状态行，带 6 位请求 ID，可与日志、面板对照：
 
@@ -173,19 +175,23 @@ https://github.com/liquidtoy001/astrbot_plugin_deepdeep
 
 ## 插件面板
 
-在 AstrBot WebUI 的插件页点开本插件，进入「DeepDeep 面板」（顶部导航栏可以直接跳到各区块）：
+在 AstrBot WebUI 的插件页点开本插件，进入「DeepDeep 面板」。面板分五页，切换不重新加载，每页的数据第一次打开时才加载；右上角可以切换语言（跟随 AstrBot / 中文 / English）：
 
-- **状态**：正常 / 已降级及原因、Key 来源、测试连接、解除熔断
-- **配置检查**：DeepDeep 的 DeepSeek / Tavily Key、AstrBot 内置网页搜索当前提供商的 Key、其他搜索插件的 API Key 和 SearXNG 地址有没有填；缺少配置时写明去哪里补（只看“填了没有”，不读取 Key 的内容）
-- **处理提醒**：每条提醒可以「忽略」，插件和 MCP 工具还可以一键「停用」（调用 AstrBot 的工具开关，点两次确认）；处理过的收进「已处理」，可随时重新启用或恢复提醒
-- **主力搜索工具**：通用搜索、网页读取的首选和备用工具，各专用搜索的分工（与告诉模型的分工说明一致），每个工具带健康状态；近 24 小时表现异常的工具会在这里提示
-- **费用**：今日 / 本月费用和上限进度（计费币种，并按汇率换算另一种币种）、近 30 天 DeepSeek 计费次数
-- **各搜索工具用量**：近 24 小时 / 7 天 / 30 天每个搜索工具的调用次数、成功率、失败、拦截、平均耗时
-- **网络连通性**：每个搜索工具走云端 API 还是自建服务（内网）、服务商在国内还是国外、能搜到国内 / 国外哪些网站；一键检测（见下文）
-- **设置**：常用的自带搜索开关、路由模式、计费币种、费用上限放在外面，汇率、熔断、匹配规则、分工规则、调用日志收在「高级设置」里；修改后自动保存、立即生效（与 AstrBot 插件配置页是同一份配置）
-- **工具路由预览**：每个工具的类型（DeepDeep / 备用 / 专用及其擅长）以及在 DeepSeek 正常、故障、超出预算时是否可见；默认只显示前 6 个搜索工具
+- **概览**
+  - 状态：正常 / 已降级及原因、测试连接、解除熔断
+  - 配置检查：DeepDeep 的 DeepSeek / Tavily Key（含 Key 无效、额度用完）、AstrBot 内置网页搜索当前提供商的 Key、其他搜索插件的 API Key 和 SearXNG 地址、对话模型内置的联网搜索；缺少配置时写明去哪里补（只看“填了没有”，不读取 Key 的内容）
+  - 处理提醒：每条提醒可以「忽略」，插件和 MCP 工具还可以一键「停用」（调用 AstrBot 的工具开关，点两次确认）；处理过的收进「已处理」，可随时重新启用或恢复提醒
+  - 费用：今日 / 本月费用和上限进度（计费币种，并按汇率换算另一种币种）、今日搜索和抓取次数
+  - 主力搜索工具：通用搜索、网页读取的首选和备用工具，各专用搜索的分工（与告诉模型的分工说明一致），每个工具带健康状态
+  - 对话模型内置的联网搜索：哪些对话模型自己会联网搜索、怎么关
+- **用量**：近 30 天 DeepSeek 计费次数；本月调用上限（Tavily 和其他搜索工具）；近 24 小时 / 7 天 / 30 天每个搜索工具的调用次数、成功率、失败、拦截、平均耗时
 - **调用日志**：按时间、来源、工具、结果、关键词或请求 ID 筛选，分页，展开详情，导出 JSON Lines，清空
-- **诊断信息**：一键生成，反馈问题时附上（不含 API Key）
+- **设置**：修改后自动保存、立即生效（与 AstrBot 插件配置页是同一份配置）
+  - 常用：DeepSeek / Tavily 开关、计费币种、每月费用上限
+  - 搜索偏好：先选预设（推荐、省钱优先、中文资料优先），再按“一般问题 / 技术问题 / 读取网页”调顺序或设为“不用”
+  - 可用的搜索工具：DeepDeep 认识的所有搜索工具、各自擅长什么、花不花钱、现在的状态和没配好时去哪里填
+  - 高级设置：路由模式、每日上限、汇率、熔断、Tavily 和其他搜索工具的每月调用上限、匹配规则、分工规则、调用日志
+- **工具与诊断**：工具路由预览（每个工具在 DeepSeek 正常、故障、超出预算时是否可见）、网络连通性（见下文）、诊断信息（反馈问题时附上，不含 API Key）
 
 ## 调用日志与统计
 
@@ -303,10 +309,10 @@ DeepDeep 自带工具使用 DeepSeek Search & Fetch API：
 
 ## 开发
 
-见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+见 [CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r tests/requirements.txt
 python -m pytest
 ```
 

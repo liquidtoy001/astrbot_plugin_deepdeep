@@ -34,6 +34,8 @@ SKIP_FIELD_RE = re.compile(r"(interval|ttl|minutes|seconds|limit|count)", re.IGN
 # 必需的服务地址（如 SearXNG 地址）
 SERVICE_URL_RE = re.compile(r"searxng.*url|url.*searxng", re.IGNORECASE)
 
+TAVILY_SIGNUP_URL = "https://app.tavily.com"
+
 STATUS_ORDER = {"missing": 0, "warn": 1, "info": 2, "ok": 3}
 
 
@@ -178,13 +180,87 @@ def check_tavily(status: dict[str, Any]) -> dict[str, Any]:
             "fix": "在 AstrBot「配置 → 网页搜索」选 Tavily 并填写 Key（填完可以切回原来的提供商，Key 会保留），"
             "或在 AstrBot 插件配置页给 DeepDeep 单独填写「Tavily API Key」。Tavily 免费额度每月 1000 次",
         }
+    failure = status.get("last_failure")
+    if failure:
+        code = failure.get("status")
+        which = (
+            f"第 {failure['position']} 个 Key（{failure.get('masked', '')}）"
+            if (failure.get("total") or 1) > 1
+            else ""
+        )
+        fix = (
+            f"到 {TAVILY_SIGNUP_URL} 登录，复制有效的 Key，"
+            "填到 AstrBot「配置 → 网页搜索」的 Tavily Key，或插件配置里的「Tavily API Key」"
+            if code == 401
+            else f"等下个月额度重置，或到 {TAVILY_SIGNUP_URL} 升级套餐、换一个 Key。"
+            "可以在「高级设置 → Tavily 每月调用上限」里设一个比额度小的数，用完前自动停用"
+        )
+        return {
+            **item,
+            # 按失败原因区分，忽略“Key 无效”后，“额度用完”仍会提醒
+            "key": f"tavily:http_{code}",
+            "status": "warn",
+            "detail": f"最近一次调用失败：{which}{failure.get('label')}（HTTP {code}）。"
+            + (
+                status.get("reason") or "已暂停提供 Tavily，技术问题改由其他搜索负责"
+                if failure.get("all_failed")
+                else "还有其他 Key 可用，暂时不影响搜索"
+            ),
+            "fix": fix,
+            "url": TAVILY_SIGNUP_URL,
+        }
     if not status.get("usable"):
         return {
             **item,
             "status": "info",
             "detail": status.get("reason") or "本次不提供",
         }
-    return {**item, "status": "ok", "detail": f"Key 来源：{status.get('source')}"}
+    detail = f"Key 来源：{status.get('source')}"
+    if status.get("usage_text"):
+        detail += f"；{status['usage_text']}"
+    return {**item, "status": "ok", "detail": detail}
+
+
+def check_model_search(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """对话模型内置的联网搜索（只看已启用的提供商）。"""
+    out = []
+    for m in models:
+        if not m.get("enabled", True):
+            continue
+        pid = m.get("provider_id") or "?"
+        item = {
+            "key": f"model:{pid}",
+            "title": f"对话模型 {pid} · 内置联网搜索",
+            "tools": [],
+            "url": "",
+        }
+        where = f"在 AstrBot「提供商」里编辑 {pid}"
+        if m.get("tools_broken"):
+            out.append(
+                {
+                    **item,
+                    "status": "warn",
+                    "detail": f"开启了{m.get('label')}。AstrBot 的说明是开启后函数工具会失效，"
+                    "DeepDeep 和其他搜索工具可能都调用不了",
+                    "fix": f"{where}，关闭「启用原生搜索功能」，联网搜索交给 DeepDeep；"
+                    "想保留 Gemini 自己搜索的话，可以关掉 DeepDeep 和其他搜索工具，免得白占上下文",
+                }
+            )
+            continue
+        if m.get("method") == "gemini_url":
+            detail = (
+                f"开启了{m.get('label')}：模型能自己读取网页，和网页读取工具作用重复"
+            )
+            fix = f"一般不用处理；想统一由 DeepDeep 读取网页的话，{where}，关闭「启用 URL 上下文」"
+        else:
+            detail = (
+                f"开启了{m.get('label')}：模型会自己联网搜索，和搜索工具作用重复"
+                + ("，而且会额外计费" if m.get("extra_cost") else "")
+                + "。这部分搜索 DeepDeep 看不到，也不计入费用和调用日志"
+            )
+            fix = f"想统一由 DeepDeep 管理搜索的话，{where}，关掉内置搜索；两边都开也能用，只是可能搜两遍"
+        out.append({**item, "status": "info", "detail": detail, "fix": fix})
+    return out
 
 
 def load_plugin_config(config_dir: Path | None, plugin: str) -> Any:
@@ -203,8 +279,9 @@ def build(
     tavily: dict[str, Any],
     builtin: dict[str, Any],
     plugins: list[dict[str, Any]],
+    models: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    items = [deepseek, tavily, builtin, *plugins]
+    items = [deepseek, tavily, builtin, *plugins, *(models or [])]
     items.sort(key=lambda x: STATUS_ORDER.get(x["status"], 9))
     tool_status: dict[str, str] = {}
     for it in items:

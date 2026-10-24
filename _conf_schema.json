@@ -25,6 +25,40 @@
         "hint": "留空时复用 AstrBot「网页搜索」里配置的 Tavily Key",
         "secret": true
     },
+    "tavily_monthly_limit": {
+        "type": "int",
+        "description": "Tavily 每月调用上限（次）",
+        "default": 0,
+        "hint": "按自然月统计 deepdeep_tavily_search 成功的调用（缓存命中不算），保存在插件数据目录。达到上限后本月不再提供这个工具，技术问题改由其他搜索负责，下个月自动恢复。0 表示不限制。Tavily 免费额度每月 1000 次，和 AstrBot 内置的 Tavily 搜索共用同一个 Key 时，建议设得比 1000 小一些"
+    },
+    "tool_monthly_limits": {
+        "type": "list",
+        "description": "其他搜索工具每月调用上限",
+        "default": [],
+        "hint": "每条写成“工具名规则 = 次数”（支持 * 通配），比如 web_search_bocha = 500。按自然月统计匹配的工具成功的调用次数（多个工具匹配同一条时合计），保存在插件数据目录。达到上限后本月不再向模型提供这些工具（只在每次请求里拿掉，不改 AstrBot 的工具开关），下个月自动恢复。DeepDeep 自己的工具不用写在这里：DeepSeek 有费用上限，Tavily 有单独的每月上限"
+    },
+    "search_preference": {
+        "type": "string",
+        "description": "搜索偏好",
+        "default": "rec",
+        "options": ["rec", "cheap", "zh", "custom"],
+        "labels": ["推荐（按评测）", "省钱优先", "中文资料优先", "自定义"],
+        "hint": "每类问题先用哪个搜索工具。推荐：按 2026-10 评测的默认顺序；省钱优先：自建和有免费额度的先用；中文资料优先：中文网站覆盖好的先用；自定义：按下面的「自定义搜索顺序」。在插件面板的「设置」页可以直接拖顺序"
+    },
+    "search_order": {
+        "type": "list",
+        "description": "自定义搜索顺序",
+        "default": [],
+        "hint": "搜索偏好选“自定义”时生效。每行“场景 = 工具名规则, 工具名规则”，场景是 general（一般问题）、tech（技术问题）、read（读取网页），排在前面的先用，前面加 ! 表示不用。建议在插件面板里调，会自动生成"
+    },
+    "panel_language": {
+        "type": "string",
+        "description": "面板语言",
+        "default": "auto",
+        "options": ["auto", "zh", "en"],
+        "labels": ["跟随 AstrBot", "中文", "English"],
+        "hint": "插件面板显示的语言。跟随 AstrBot 时按 AstrBot 管理面板当前的语言显示"
+    },
     "routing_mode": {
         "type": "string",
         "description": "搜索路由模式",

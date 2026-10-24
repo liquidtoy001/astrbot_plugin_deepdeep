@@ -1,4 +1,5 @@
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,24 @@ from aiohttp.test_utils import TestServer
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
+
+
+class _QuietLogger:
+    """AstrBot logger 的替身：core/ 只从 astrbot.api 导入 logger，单元测试里没有安装 AstrBot。"""
+
+    def __getattr__(self, _name):
+        return lambda *_a, **_k: None
+
+
+try:
+    import astrbot.api  # noqa: F401
+except ImportError:
+    _astrbot = types.ModuleType("astrbot")
+    _api = types.ModuleType("astrbot.api")
+    _api.logger = _QuietLogger()
+    _astrbot.api = _api
+    sys.modules.setdefault("astrbot", _astrbot)
+    sys.modules.setdefault("astrbot.api", _api)
 
 
 class FakeDeepSeek:

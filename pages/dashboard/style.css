@@ -273,15 +273,25 @@ td.cover > div + div { margin-top: 3px; }
   border-bottom: 1px solid var(--border);
 }
 .navbar::-webkit-scrollbar { display: none; }
-.navbar a {
-  flex: none; padding: 4px 12px; border-radius: 999px; font-size: 13px;
-  color: var(--muted); text-decoration: none; white-space: nowrap;
+.navbar button {
+  flex: none; padding: 4px 14px; border: 0; border-radius: 999px; font: inherit; font-size: 13px;
+  color: var(--muted); background: transparent; cursor: pointer; white-space: nowrap;
 }
-.navbar a:hover { color: var(--text); background: var(--accent-soft); }
-.navbar a.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
-.navbar a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* 跳转后标题不被导航栏挡住 */
-.page > section { scroll-margin-top: 56px; }
+.navbar button:hover { color: var(--text); background: var(--accent-soft); }
+.navbar button.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.navbar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* 页面：同一个文档里切换显示，不重新加载 */
+.view { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+.view > * { min-width: 0; }
+.view[hidden] { display: none; }
+.view > .setup-box { margin-bottom: 0; }
+.settings .intro { margin: 0; }
+
+/* 对话模型内置搜索 */
+.models-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.models-list li { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px; align-items: start; font-size: 13px; }
+.models-list .fix { margin-top: 2px; overflow-wrap: anywhere; }
 
 /* 配置检查 */
 .setup-box { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px; }
@@ -305,3 +315,32 @@ td.cover > div + div { margin-top: 3px; }
 .handled h3 { font-size: 12px; color: var(--muted); font-weight: 600; margin: 8px 0 4px; }
 .handled ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; }
 .handled li { overflow-wrap: anywhere; }
+
+/* 设置页：几张卡片在同一个表单里 */
+.settings-stack { display: grid; gap: 16px; }
+
+/* 搜索偏好 */
+.pref-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.pref-chips button { padding: 3px 12px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.pref-chips button.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.pref-chips.scenes button { border-radius: 6px; }
+.pref-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.pref-list li { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
+.pref-list li.off { opacity: 0.55; }
+.pref-list .num { width: 24px; height: 24px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; }
+.pref-list li.off .num { background: var(--border); color: var(--muted); }
+.pref-list .name { overflow-wrap: anywhere; }
+.pref-list .name small { display: block; color: var(--muted); font-size: 12px; }
+.pref-list .ctl { display: flex; gap: 4px; }
+.pref-list .ctl .btn { padding: 2px 8px; min-width: 30px; }
+.pref-preview { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--bg); font-size: 12px; color: var(--muted); white-space: pre-line; }
+
+/* 可用的搜索工具 */
+.catalog-list { list-style: none; margin: 0; padding: 0; }
+.catalog-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 9px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.catalog-list li:first-child { border-top: 0; }
+.catalog-list .src { color: var(--muted); font-size: 12px; margin-left: 6px; }
+.catalog-list .why { color: var(--text); margin-top: 2px; }
+.catalog-list .meta { color: var(--muted); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+.catalog-more { margin-top: 6px; border-top: 1px dashed var(--border); padding-top: 6px; }
+.catalog-more > summary { cursor: pointer; }

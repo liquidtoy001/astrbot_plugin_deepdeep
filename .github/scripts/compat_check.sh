@@ -3,14 +3,14 @@
 #   1. 在镜像里运行 compat_probe.py，逐项检查依赖的接口
 #   2. 挂载插件真正启动一次 AstrBot，确认插件能加载、工具能注册
 #
-# 用法：scripts/compat_check.sh v4.29.1 [报告文件]
+# 用法：.github/scripts/compat_check.sh v4.29.1 [报告文件]
 # 退出码：0 通过，1 不兼容，2 跳过（镜像还没发布）
 set -uo pipefail
 
 TAG="${1:?用法: compat_check.sh <AstrBot 版本，如 v4.29.1> [报告文件]}"
 REPORT="${2:-compat_report.md}"
 IMAGE="soulter/astrbot:${TAG}"
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PLUGIN="astrbot_plugin_deepdeep"
 WORK="$(mktemp -d)"
 NAME="deepdeep_compat_$$"
@@ -38,7 +38,7 @@ status=0
 echo "### 接口检查" >>"$REPORT"
 echo '```text' >>"$REPORT"
 if docker run --rm --network none --entrypoint python -w /AstrBot \
-  -v "$ROOT/scripts:/probe:ro" "$IMAGE" -W ignore /probe/compat_probe.py >"$WORK/probe.txt" 2>&1; then
+  -v "$ROOT/.github/scripts:/probe:ro" "$IMAGE" -W ignore /probe/compat_probe.py >"$WORK/probe.txt" 2>&1; then
   :
 else
   status=1

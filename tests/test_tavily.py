@@ -1,7 +1,11 @@
 """DeepDeep 自带的 Tavily 搜索和“按问题类型分工”。"""
 
+import json
+from datetime import date
+
 from core import tavily
 from core.router import TAVILY_TOOL, ToolRouter, parse_lane_rules
+from core.stats import MonthlyCounter
 from core.tavily import TavilyClient, TavilySearch, format_results
 
 
@@ -187,3 +191,106 @@ def test_tavily_extract_is_not_ranked_as_search():
     r = ToolRouter()
     alts = r.alternatives(["tavily_extract_web_page", "searxng_web_fetch_url"], "fetch")
     assert alts == ["searxng_web_fetch_url", "tavily_extract_web_page"]
+
+
+# ---------- 每月调用上限 ----------
+
+
+class Today:
+    def __init__(self, d):
+        self.d = d
+
+    def __call__(self):
+        return self.d
+
+
+def test_monthly_counter_rolls_over_and_persists(tmp_path):
+    path = tmp_path / "tavily_usage.json"
+    today = Today(date(2026, 10, 31))
+    c = MonthlyCounter(path, today=today)
+    assert c.count() == 0
+    c.add()
+    c.add()
+    assert c.count() == 2
+    # 重启后接着计数
+    assert MonthlyCounter(path, today=today).count() == 2
+    # 跨月从 0 开始，旧月份的数据还在文件里
+    today.d = date(2026, 11, 1)
+    assert c.count() == 0
+    assert c.add() == 1
+    # 只保留最近 3 个月
+    for month in (12, 1):
+        today.d = date(2026 if month == 12 else 2027, month, 1)
+        c.add()
+    assert sorted(json.loads(path.read_text(encoding="utf-8"))) == [
+        "2026-11",
+        "2026-12",
+        "2027-01",
+    ]
+
+
+def test_monthly_counter_ignores_broken_file(tmp_path):
+    path = tmp_path / "tavily_usage.json"
+    path.write_text("{oops", encoding="utf-8")
+    assert MonthlyCounter(path).count() == 0
+    path.write_text('{"2026-10": "x", "2026-09": true}', encoding="utf-8")
+    assert MonthlyCounter(path, today=Today(date(2026, 10, 5))).count() == 0
+
+
+async def test_monthly_limit_counts_only_billable_calls(fake_api, tmp_path):
+    s = make_search(fake_api)
+    s.usage = MonthlyCounter(tmp_path / "u.json", today=Today(date(2026, 10, 5)))
+    s.cache = tavily.TTLCache(60)
+    s.monthly_limit = 2
+    fake_api.tavily_queue += [
+        (200, {"results": [tavily_result(1)]}, {}),
+        (500, {"detail": "boom"}, {}),
+        (500, {"detail": "boom"}, {}),
+        (200, {"results": []}, {}),
+    ]
+    await s.search("a", 1)
+    await s.search("a", 1)  # 缓存命中不算
+    assert s.month_used() == 1 and s.usage_text() == "本月 Tavily 已用 1 / 2 次"
+    failed = await s.search("b", 1)  # 失败（含重试）不算
+    assert failed.reason == "http_500" and s.month_used() == 1
+    await s.search("c", 1)  # 没有结果也是一次计费调用
+    assert s.month_used() == 2 and s.limit_reached()
+    sent = len(fake_api.requests)
+    out = await s.search("d", 1)
+    assert out.should_fallback and out.reason == "monthly_limit"
+    assert "本月 Tavily 调用已达上限（2 / 2 次）" in out.text
+    assert len(fake_api.requests) == sent  # 不再发请求
+    # 缓存里有的照样返回
+    assert "缓存" in (await s.search("a", 1)).text
+    # 下个月自动恢复
+    s.usage._today = Today(date(2026, 11, 1))
+    assert not s.limit_reached() and s.usage_text() == "本月 Tavily 已用 0 / 2 次"
+    s.monthly_limit = 0
+    assert s.usage_text() == "本月 Tavily 已用 0 次"
+    await s.client.close()
+
+
+async def test_key_failures_are_remembered_until_success_or_key_change(fake_api):
+    keys = ["tvly-a"]
+    s = TavilySearch(
+        TavilyClient(lambda: list(keys), api_url=f"{fake_api.base_url}/search")
+    )
+    fake_api.tavily_queue.append((401, {"detail": "bad"}, {}))
+    await s.search("q", 1)
+    f = s.last_failure()
+    assert f["status"] == 401 and f["label"] == "Key 无效" and "keys" not in f
+    # 换了 Key 之后旧记录不再显示
+    keys[0] = "tvly-b"
+    assert s.last_failure() is None
+    fake_api.tavily_queue.append((433, {"detail": "limit"}, {}))
+    await s.search("q2", 1)
+    assert s.last_failure()["label"] == "额度用完"
+    # 限流、网络错误不记
+    fake_api.tavily_queue += [(429, {}, {}), (429, {}, {})]
+    await s.search("q3", 1)
+    assert s.last_failure()["status"] == 433
+    # 调用成功后清除
+    fake_api.tavily_queue.append((200, {"results": [tavily_result(1)]}, {}))
+    await s.search("q4", 1)
+    assert s.last_failure() is None
+    await s.client.close()

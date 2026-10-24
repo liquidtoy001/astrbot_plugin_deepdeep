@@ -4,7 +4,9 @@
 import importlib
 import json
 import sys
+import time
 import types
+from datetime import date
 from pathlib import Path
 
 import docstring_parser
@@ -986,7 +988,14 @@ async def test_tavily_tool_reuses_builtin_key(plugin_module, fake_api):
     text = await plugin.deepdeep_tavily_search(event, "python 3.15", 2)
     assert "请改用 deepdeep_web_search" in text
     status = await api(plugin, "status")()
-    assert status["tavily"]["usable"] and status["tavily"]["masked"]
+    assert status["tavily"]["masked"]
+    # 唯一的 Key 额度用完：暂停提供，约 24 小时后再试
+    assert status["tavily"]["usable"] is False
+    assert "额度用完，约 24 小时后自动重试" in status["tavily"]["reason"]
+    _, toolset, _ = await routed(plugin)
+    assert "deepdeep_tavily_search" not in toolset.names()
+    plugin.tavily.client._wall = lambda: time.time() + 24 * 3600 + 1
+    assert plugin.tavily_usable()[0]
     await plugin.terminate()
 
 
@@ -1013,6 +1022,126 @@ async def test_tavily_tool_removed_when_unusable(plugin_module):
     CURRENT_REQUEST.body = {"tavily_enabled": True}
     status = await api(plugin, "settings", "POST")()
     assert status["tavily"]["configured"] is False
+    await plugin.terminate()
+
+
+TAVILY_HIT = {
+    "results": [{"title": "PEP", "url": "https://peps.python.org/x", "content": "c"}]
+}
+
+
+def make_tavily_plugin(plugin_module, fake_api, **config):
+    plugin = make_plugin(
+        plugin_module,
+        fake_api,
+        routing_mode="guide_only",
+        search_lane_rules=None,
+        **config,
+    )
+    plugin.context._config["provider_settings"].update(
+        websearch_provider="serpapi", websearch_tavily_key=["tvly-builtin"]
+    )
+    plugin.tavily.client.api_url = f"{fake_api.base_url}/search"
+    return plugin
+
+
+async def routed(plugin):
+    names = [n for n in SEARCH_TOOLS if "tavily" not in n] + ["deepdeep_tavily_search"]
+    toolset = FakeToolSet(names)
+    req = types.SimpleNamespace(func_tool=toolset, system_prompt="")
+    event = FakeEvent()
+    await plugin.route_search_tools(event, req)
+    return event, toolset, req.system_prompt
+
+
+async def test_tavily_monthly_limit_removes_tool_until_next_month(
+    plugin_module, fake_api, tmp_path
+):
+    plugin = make_tavily_plugin(plugin_module, fake_api, tavily_monthly_limit=1)
+    month = {"d": date(2026, 10, 30)}
+    plugin.tavily.usage._today = lambda: month["d"]
+    event, toolset, prompt = await routed(plugin)
+    assert "deepdeep_tavily_search" in toolset.names()
+    assert "技术问题：优先 deepdeep_tavily_search" in prompt
+    fake_api.tavily_queue.append((200, TAVILY_HIT, {}))
+    assert "成功" in await plugin.deepdeep_tavily_search(event, "python 3.14", 2)
+    # 计数保存在插件数据目录
+    assert json.loads((tmp_path / "tavily_usage.json").read_text()) == {
+        "2026-10": {"total": 1}
+    }
+    # 本次请求里工具还在：直接回复已达上限，并建议改用 DeepDeep，不再发请求
+    sent = len(fake_api.requests)
+    text = await plugin.deepdeep_tavily_search(event, "python 3.15", 2)
+    assert text.startswith("本月 Tavily 调用已达上限（本月 Tavily 已用 1 / 1 次）")
+    assert "请改用 deepdeep_web_search" in text and len(fake_api.requests) == sent
+    # 之后的请求里拿掉工具，分工说明不再提它；同一个月里每次都一样
+    for _ in range(2):
+        _, toolset, prompt = await routed(plugin)
+        assert "deepdeep_tavily_search" not in toolset.names()
+        assert "deepdeep_tavily_search" not in prompt
+    status = await api(plugin, "status")()
+    assert status["tavily"]["usable"] is False and status["tavily"]["limit_reached"]
+    assert "已达上限" in status["tavily"]["reason"]
+    assert status["tavily"]["usage_text"] == "本月 Tavily 已用 1 / 1 次"
+    # 下个月自动恢复
+    month["d"] = date(2026, 11, 1)
+    _, toolset, prompt = await routed(plugin)
+    assert "deepdeep_tavily_search" in toolset.names()
+    assert "技术问题：优先 deepdeep_tavily_search" in prompt
+    await plugin.terminate()
+
+
+async def test_tavily_monthly_limit_saved_from_webui(plugin_module, fake_api):
+    plugin = make_tavily_plugin(plugin_module, fake_api)
+    assert plugin.tavily.monthly_limit == 0
+    CURRENT_REQUEST.body = {"tavily_monthly_limit": 800}
+    status = await api(plugin, "settings", "POST")()
+    assert status["settings"]["tavily_monthly_limit"] == 800
+    assert (
+        plugin.tavily.monthly_limit == 800
+        and plugin.config["tavily_monthly_limit"] == 800
+    )
+    assert status["tavily"]["usage_text"] == "本月 Tavily 已用 0 / 800 次"
+    CURRENT_REQUEST.body = {"tavily_monthly_limit": -1}
+    bad = await api(plugin, "settings", "POST")()
+    assert "tavily_monthly_limit" in bad["error"] and plugin.tavily.monthly_limit == 800
+    await plugin.terminate()
+
+
+async def test_tavily_key_failure_shows_in_setup_check(plugin_module, fake_api):
+    plugin = make_tavily_plugin(plugin_module, fake_api)
+    event, _, _ = await routed(plugin)
+    items = {
+        it["key"]: it for it in (await api(plugin, "overview")())["setup"]["items"]
+    }
+    assert items["tavily"]["status"] == "ok"
+    assert "本月 Tavily 已用 0 次" in items["tavily"]["detail"]
+    fake_api.tavily_queue.append((401, {"detail": "bad"}, {}))
+    text = await plugin.deepdeep_tavily_search(event, "q", 1)
+    assert "请改用 deepdeep_web_search" in text
+    data = await api(plugin, "overview")()
+    items = {it["key"]: it for it in data["setup"]["items"]}
+    item = items["tavily:http_401"]
+    assert item["status"] == "warn" and "Key 无效" in item["detail"]
+    assert item["url"] == "https://app.tavily.com" and not item["ignored"]
+    assert data["setup"]["tool_status"]["deepdeep_tavily_search"] == "warn"
+    status = await api(plugin, "status")()
+    assert status["tavily"]["last_failure"]["label"] == "Key 无效"
+    # 唯一的 Key 无效：暂停提供，不再发请求
+    sent = len(fake_api.requests)
+    assert "暂不可用：Tavily Key 无效" in await plugin.deepdeep_tavily_search(
+        event, "q1", 1
+    )
+    assert len(fake_api.requests) == sent
+    # 换成有效的 Key 后自动恢复，调用成功，提醒消失
+    plugin.context._config["provider_settings"]["websearch_tavily_key"] = ["tvly-new"]
+    fake_api.tavily_queue.append((200, TAVILY_HIT, {}))
+    await plugin.deepdeep_tavily_search(event, "q2", 1)
+    items = {
+        it["key"]: it for it in (await api(plugin, "overview")())["setup"]["items"]
+    }
+    assert items["tavily"]["status"] == "ok"
+    assert "本月 Tavily 已用 1 次" in items["tavily"]["detail"]
     await plugin.terminate()
 
 
@@ -1130,4 +1259,204 @@ async def test_ignore_and_disable_from_webui(plugin_module, tmp_path):
     data = await api(plugin, "enable-tools", "POST")()
     assert data["done"] == ["grok_web_search"] and grok.active is True
     assert data["handled"]["disabled"] == []
+    await plugin.terminate()
+
+
+# ---------- 按会话读取配置、其他搜索工具的每月上限、模型内置搜索 ----------
+
+
+async def test_tavily_reads_per_session_config(plugin_module, fake_api):
+    plugin = make_tavily_plugin(plugin_module, fake_api)
+    default = plugin.context._config
+    # 群 A 绑定的配置文件里，内置网页搜索就是 Tavily，Key 也不同
+    group_a = {
+        "provider_settings": {
+            "web_search": True,
+            "websearch_provider": "tavily",
+            "websearch_tavily_key": ["tvly-group-a"],
+        }
+    }
+    configs = {"aiocqhttp:GroupMessage:a": group_a}
+    plugin.context.get_config = lambda umo=None: configs.get(umo, default)
+    event_a = FakeEvent()
+    event_a.unified_msg_origin = "aiocqhttp:GroupMessage:a"
+    names = [n for n in SEARCH_TOOLS if "tavily" not in n] + ["deepdeep_tavily_search"]
+    toolset = FakeToolSet(names)
+    await plugin.route_search_tools(
+        event_a, types.SimpleNamespace(func_tool=toolset, system_prompt="")
+    )
+    assert "deepdeep_tavily_search" not in toolset.names()  # 避免和内置 Tavily 重复
+    assert plugin.tavily_keys("aiocqhttp:GroupMessage:a") == ["tvly-group-a"]
+    # 群 B 用默认配置：照常提供，并用默认配置的 Key
+    event_b = FakeEvent()
+    event_b.unified_msg_origin = "aiocqhttp:GroupMessage:b"
+    toolset = FakeToolSet(names)
+    await plugin.route_search_tools(
+        event_b, types.SimpleNamespace(func_tool=toolset, system_prompt="")
+    )
+    assert "deepdeep_tavily_search" in toolset.names()
+    fake_api.tavily_queue.append((200, TAVILY_HIT, {}))
+    await plugin.deepdeep_tavily_search(event_b, "q", 1)
+    assert fake_api.requests[-1]["auth"] == "Bearer tvly-builtin"
+    await plugin.terminate()
+
+
+async def test_other_tool_monthly_limit(plugin_module, tmp_path):
+    plugin = make_plugin(
+        plugin_module, routing_mode="guide_only", tool_monthly_limits=["searxng_* = 2"]
+    )
+    month = {"d": date(2026, 10, 30)}
+    plugin.tool_caps.counter._today = lambda: month["d"]
+    event = FakeEvent()
+    ok = types.SimpleNamespace(content=[], isError=False)
+    err = types.SimpleNamespace(content=[], isError=True)
+    tool = FakeTool("searxng_web_search_general")
+    await plugin.record_tool_end(event, tool, {}, ok)
+    await plugin.record_tool_end(event, tool, {}, err)  # 出错的不算
+    await plugin.record_tool_end(
+        event, FakeTool("set_user_nickname"), {}, ok
+    )  # 非搜索工具不算
+    await plugin.record_tool_end(
+        event, FakeTool("deepdeep_web_search"), {}, ok
+    )  # 自己的工具不算
+    assert plugin.tool_caps.counter.counts() == {"searxng_web_search_general": 1}
+    toolset = FakeToolSet(SEARCH_TOOLS)
+    await plugin.route_search_tools(
+        event, types.SimpleNamespace(func_tool=toolset, system_prompt="")
+    )
+    assert "searxng_web_search_general" in toolset.names()
+    await plugin.record_tool_end(event, FakeTool("searxng_web_fetch_url"), {}, ok)
+    toolset = FakeToolSet(SEARCH_TOOLS)
+    req = types.SimpleNamespace(func_tool=toolset, system_prompt="")
+    await plugin.route_search_tools(event, req)
+    assert not [n for n in toolset.names() if n.startswith("searxng_")]
+    assert "searxng_" not in req.system_prompt
+    assert (tmp_path / "tool_usage.json").exists()
+    status = await api(plugin, "status")()
+    assert status["tool_caps"][0]["used"] == 2 and status["tool_caps"][0]["limit"] == 2
+    overview = await api(plugin, "overview")()
+    assert "searxng_web_search_general" in overview["capped"]
+    assert not [
+        n
+        for lane in overview["lanes"]
+        for n in [lane["primary"], *lane["backups"]]
+        if n.startswith("searxng_")
+    ]
+    # 下个月恢复
+    month["d"] = date(2026, 11, 1)
+    toolset = FakeToolSet(SEARCH_TOOLS)
+    await plugin.route_search_tools(
+        event, types.SimpleNamespace(func_tool=toolset, system_prompt="")
+    )
+    assert "searxng_web_search_general" in toolset.names()
+    await plugin.terminate()
+
+
+async def test_new_settings_saved_from_webui(plugin_module):
+    plugin = make_plugin(plugin_module)
+    CURRENT_REQUEST.body = {
+        "tool_monthly_limits": ["web_search_bocha = 500", "坏的一行"],
+        "panel_language": "en",
+    }
+    status = await api(plugin, "settings", "POST")()
+    assert status["settings"]["tool_monthly_limits"] == ["web_search_bocha = 500"]
+    assert (
+        status["settings"]["panel_language"] == "en" and plugin.panel_language == "en"
+    )
+    CURRENT_REQUEST.body = {"panel_language": "fr"}
+    bad = await api(plugin, "settings", "POST")()
+    assert "panel_language" in bad["error"]
+    await plugin.terminate()
+
+
+async def test_model_builtin_search_in_overview(plugin_module):
+    gem = FakeProvider(
+        "https://generativelanguage.googleapis.com/", ["sk-gem-secret"], "gem"
+    )
+    gem.provider_config.update(
+        type="googlegenai_chat_completion", gm_native_search=True, model="gemini-3"
+    )
+    gem.get_model = lambda: "gemini-3"
+    plugin = make_plugin(plugin_module, providers=[gem])
+    plugin.context.get_using_provider = lambda umo=None: gem
+    data = await api(plugin, "overview")()
+    assert data["model_search"] == [
+        {
+            "provider_id": "gem",
+            "model": "gemini-3",
+            "provider_type": "googlegenai_chat_completion",
+            "method": "gemini",
+            "label": "Gemini 原生搜索（Google 搜索）",
+            "tools_broken": True,
+            "extra_cost": False,
+            "url_context": False,
+            "enabled": True,
+            "is_default": True,
+            "config_keys": ["gm_native_search"],
+        }
+    ]
+    items = {it["key"]: it for it in data["setup"]["items"]}
+    assert items["model:gem"]["status"] == "warn" and not items["model:gem"]["ignored"]
+    diag = await api(plugin, "diagnostics")()
+    assert diag["model_search"][0]["provider_id"] == "gem"
+    assert "sk-gem-secret" not in str(diag["model_search"])  # 不带 Key
+    await plugin.terminate()
+
+
+async def test_search_preference_endpoint_and_route(plugin_module):
+    plugin = make_plugin(
+        plugin_module, routing_mode="guide_only", search_lane_rules=None
+    )
+    toolset = FakeToolSet(SEARCH_TOOLS)
+    req = types.SimpleNamespace(func_tool=toolset, system_prompt="")
+    await plugin.route_search_tools(FakeEvent(), req)
+    baseline = req.system_prompt
+    data = await api(plugin, "search-tools")()
+    keys = {e["key"]: e for e in data["catalog"]}
+    assert (
+        keys["deepseek"]["status"] == "ok"
+        and keys["tavily_builtin"]["status"] == "missing"
+    )
+    prefs = data["preferences"]
+    assert prefs["preset"] == "rec" and set(prefs["orders"]) == {
+        "rec",
+        "cheap",
+        "zh",
+        "custom",
+    }
+    general = [x["name"] for x in prefs["orders"]["rec"]["general"]]
+    assert general[0] == "deepdeep_web_search"
+    assert prefs["orders"]["rec"]["general"][0]["label"] == "DeepSeek 搜索"
+    assert prefs["orders"]["custom"] == prefs["orders"]["rec"]  # 还没自定义过
+    # 保存自定义：SearXNG 优先，读网页不用 SearXNG
+    CURRENT_REQUEST.body = {
+        "search_preference": "custom",
+        "search_order": [
+            "general = searxng_web_search_general, deepdeep_web_search",
+            "read = !searxng_web_fetch_url",
+        ],
+    }
+    status = await api(plugin, "settings", "POST")()
+    assert status["settings"]["search_preference"] == "custom"
+    toolset = FakeToolSet(SEARCH_TOOLS)
+    req = types.SimpleNamespace(func_tool=toolset, system_prompt="")
+    await plugin.route_search_tools(FakeEvent(), req)
+    assert "searxng_web_fetch_url" not in toolset.names()
+    assert "优先 searxng_web_search_general" in req.system_prompt
+    assert req.system_prompt != baseline
+    data = await api(plugin, "search-tools")()
+    read = data["preferences"]["orders"]["custom"]["read"]
+    assert {k: read[-1][k] for k in ("name", "disabled")} == {
+        "name": "searxng_web_fetch_url",
+        "disabled": True,
+    }
+    # 回到“推荐”：提示词和原来一样
+    CURRENT_REQUEST.body = {"search_preference": "rec"}
+    await api(plugin, "settings", "POST")()
+    toolset = FakeToolSet(SEARCH_TOOLS)
+    req = types.SimpleNamespace(func_tool=toolset, system_prompt="")
+    await plugin.route_search_tools(FakeEvent(), req)
+    assert req.system_prompt == baseline
+    CURRENT_REQUEST.body = {"search_preference": "best"}
+    assert "search_preference" in (await api(plugin, "settings", "POST")())["error"]
     await plugin.terminate()

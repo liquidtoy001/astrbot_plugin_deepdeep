@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="logo.png" width="128" alt="DeepDeep" />
+<img src="../logo.png" width="128" alt="DeepDeep" />
 
 # DeepDeep
 
-[简体中文](README.md) | **English**
+[简体中文](../README.md) | **English**
 
-A search manager for AstrBot: lets DeepSeek search, AstrBot's built-in web search and community search plugins **work together by specialty**, with automatic fallback, spending caps, usage stats and a call log
+A search manager for AstrBot: lets DeepSeek search, Tavily, AstrBot's built-in web search and community search plugins **work together by specialty**, with search preferences, automatic fallback, spending and call caps, usage stats and a call log
 
 [![CI](https://github.com/liquidtoy001/astrbot_plugin_deepdeep/actions/workflows/ci.yml/badge.svg)](https://github.com/liquidtoy001/astrbot_plugin_deepdeep/actions/workflows/ci.yml)
 ![AstrBot](https://img.shields.io/badge/AstrBot-%E2%89%A54.26.0-blue)
@@ -20,12 +20,14 @@ With several search tools installed, the model often picks the wrong one among o
 
 DeepDeep **manages** your search tools:
 
-- **Division of labor**: general web search goes to the best general engine; images, videos, papers, GitHub and so on go to their specialist tools, and each request tells the model which tool is good at what
+- **Division of labor**: general web search goes to the best general engine, technical questions go to Tavily, and images, videos, papers, GitHub and so on go to their specialist tools; each request tells the model which tool is good at what
+- **Search preference**: don't like the default order? Pick a preset (recommended, save money, Chinese sources first), or set which tool goes first and which to skip for general questions, technical questions and reading pages
+- **Tool overview**: every search tool DeepDeep knows, what each is good at, what it costs and whether it works right now, with where to set it up; it also warns when a chat model searches the web by itself (e.g. Gemini native search)
 - **Routing and fallback**: by default no tool is hidden; the model is told which general search to use first and which to try when results are empty or poor. With no key, over budget, during an outage or after a failed call, the model is steered to other search tools, even in the middle of a conversation
-- **Cost control**: CNY or USD billing, daily and monthly caps; hitting a cap never silently switches to another tool billed by the same DeepSeek account
+- **Cost control**: CNY or USD billing, daily and monthly caps; hitting a cap never silently switches to another tool billed by the same DeepSeek account. Tavily and other paid search tools can get monthly call caps and stop for the rest of the month once reached
 - **Usage stats**: calls, success rate, failures and average latency for every search tool
 - **Call log**: every call of **every tool** is stored persistently, filterable and exportable
-- **Dashboard**: view and change all of the above in the AstrBot WebUI; changes apply immediately
+- **Dashboard**: view and change all of the above in the AstrBot WebUI; changes apply immediately. Available in Chinese and English
 - **No extra dependencies**, only libraries bundled with AstrBot
 
 > **About AstrBot's built-in DeepSeek search**: since AstrBot 4.29.1, DeepSeek is available as a built-in web search provider. If basic DeepSeek search is all you need, the built-in one is enough. DeepDeep is for setups with several search tools that need fallback, cost control, stats and logs. Its own results also include publish date, relevance and authority, so the model can tell new from old (the built-in tool returns title, link and summary only). Both can be enabled together; DeepDeep treats the built-in DeepSeek search as a fallback.
@@ -136,25 +138,29 @@ Tool not listed? Check the dashboard's "Tool routing preview". If it isn't recog
 |---|---|
 | `deepdeep_web_search(query, count)` | Web search through the [DeepSeek Search API](https://api-docs.deepseek.com/guides/search). Each result has a long summary, publish date, relevance and authority. Supports `site:`, `-site:`, `"exact phrase"`, `lang:zh,en`, `after:2026-01-01`, `before:2026-06` |
 | `deepdeep_web_fetch(url)` | Reads a full page as Markdown through the DeepSeek Fetch API |
-| `deepdeep_tavily_search(query, count)` | Tavily search for technical questions and as DeepSeek's first fallback. Reuses the Tavily key from AstrBot's web search settings by default (even when the built-in provider is something else); not offered without a key or when the built-in provider already is Tavily |
+| `deepdeep_tavily_search(query, count)` | Tavily search for technical questions and as DeepSeek's first fallback. Reuses the Tavily key from AstrBot's web search settings by default (even when the built-in provider is something else); not offered without a key or when the built-in provider already is Tavily. An optional monthly call cap (Advanced settings) stops offering it for the rest of the month once reached |
 
 The first line of each result is a status line with a 6-character request ID that also appears in the logs and dashboard, e.g. `[DeepSeek 搜索 #a1b2c3] 成功 · 6 条结果 · 456 ms`. DeepDeep asks DeepSeek for at least 10 results per call (billing is per request, not per result) and shows the model about `count` of them. If fewer than 3 results pass the relevance threshold, the next ones are added and marked as less relevant. For "latest" questions or queries with `after:`/`before:`, results are not filtered by relevance (fresh content tends to score low), the model is reminded that results are sorted by relevance, not date, the "newest result" date covers all returned results, and up to 2 newer but lower-ranked results are appended.
 
 ## Dashboard
 
-Open the plugin in the AstrBot WebUI and choose "DeepDeep Dashboard" (the sticky top bar jumps to each section):
+Open the plugin in the AstrBot WebUI and choose "DeepDeep Dashboard". It has five pages; switching doesn't reload anything, and each page loads its data the first time it's opened. The language switch in the top right offers Follow AstrBot / 中文 / English:
 
-- **Status**: healthy or degraded and why, key source, connection test, circuit reset
-- **Setup check**: whether DeepDeep's DeepSeek/Tavily keys, the key of AstrBot's selected built-in web search provider, and other search plugins' API keys and SearXNG URL are filled in, with where to fix each (only checks whether a value is set, never reads it)
-- **Acting on warnings**: each warning can be ignored, and plugin/MCP tools can be stopped with one click (uses AstrBot's own tool switch, confirm twice); handled items move to a folded "Handled" section where they can be re-enabled or un-ignored
-- **Main search tools**: first choice and fallbacks for general search and page reading, plus each specialist tool's job, with health badges; tools that misbehaved in the last 24 hours are flagged here
-- **Spending**: today and this month against the caps, in the billing currency plus the converted other currency; DeepSeek calls over 30 days
-- **Search tool usage**: calls, success rate, failures, blocked calls and average latency per search tool over 24 hours, 7 days or 30 days
-- **Network**: whether each search backend is a cloud API or a self-hosted (intranet) service, where the provider is, and how well it covers Chinese and international sites; a one-click check (see below)
-- **Settings**: the own-search switch, routing mode, currency and caps up front; exchange rate, circuit breaker, patterns, specialist rules and call log options under "Advanced". Changes save automatically
-- **Tool routing preview**: each tool's role (DeepDeep, fallback, or specialist and its specialty) and whether it is visible when DeepSeek is healthy, down or over budget
+- **Overview**
+  - Status: healthy or degraded and why, connection test, circuit reset
+  - Setup check: DeepDeep's DeepSeek/Tavily keys (including invalid keys and used-up quota), the key of AstrBot's selected built-in web search provider, other search plugins' API keys and SearXNG URL, and chat models' built-in web search, with where to fix each (only checks whether a value is set, never reads it)
+  - Acting on warnings: each warning can be ignored, and plugin/MCP tools can be stopped with one click (uses AstrBot's own tool switch, confirm twice); handled items move to a folded "Handled" section where they can be re-enabled or un-ignored
+  - Spending: today and this month against the caps, in the billing currency plus the converted other currency; searches and fetches today
+  - Main search tools: first choice and fallbacks for general search and page reading, plus each specialist tool's job, with health badges
+  - Chat models' built-in web search: which chat models search the web by themselves, and how to turn it off
+- **Usage**: DeepSeek calls over 30 days; monthly call caps (Tavily and other search tools); calls, success rate, failures, blocked calls and average latency per search tool over 24 hours, 7 days or 30 days
 - **Call log**: filter by time, source, tool, outcome, keyword or request ID; paging, details, JSON Lines export, clear
-- **Diagnostics**: one click, attach to bug reports (contains no API key)
+- **Settings**: changes save automatically and apply immediately
+  - Basics: DeepSeek/Tavily switches, billing currency, monthly cap
+  - Search preference: pick a preset (recommended, save money, Chinese sources first), then reorder or skip tools for general questions, technical questions and reading pages
+  - Available search tools: every search tool DeepDeep knows, what each is good at, what it costs, its status, and where to set it up
+  - Advanced: routing mode, daily cap, exchange rate, circuit breaker, monthly call caps for Tavily and other search tools, patterns, specialist rules, call log options
+- **Tools & diagnostics**: tool routing preview (whether each tool is visible when DeepSeek is healthy, down or over budget), network connectivity (see below), diagnostics to attach to bug reports (no API keys)
 
 ## Search tool health
 
@@ -197,10 +203,10 @@ DeepDeep's own tools use the DeepSeek Search & Fetch API: **¥5 per 1,000 succes
 
 ## Development
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) (Chinese).
+See [CONTRIBUTING.md](../.github/CONTRIBUTING.md) (Chinese).
 
 ```bash
-pip install -r requirements-dev.txt
+pip install -r tests/requirements.txt
 python -m pytest
 ```
 

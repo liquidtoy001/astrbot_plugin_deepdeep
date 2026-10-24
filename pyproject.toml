@@ -1,0 +1,25 @@
+# 只放开发工具的配置（测试、代码检查）。插件的依赖仍在 requirements.txt，这里不写 [project]，
+# 免得 AstrBot 把它当成插件的依赖声明。放在插件目录里，单独检出或放在 AstrBot 的 data/plugins 下时都用同一套规则
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+exclude = ["pages", "*.md"]
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "UP", "B", "ASYNC", "C4", "SIM", "RUF", "BLE", "T20"]
+ignore = [
+  "E501",    # 交给 formatter；中文提示文本难以按 88 列断行
+  "RUF001",  # 中文字符串里的全角标点
+  "RUF002",
+  "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["BLE001", "T20", "ASYNC240"]
+".github/scripts/*" = ["T20", "BLE001", "E501"]  # 兼容性探针需要输出结果

@@ -19,20 +19,22 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 from astrbot.api.web import error_response, file_response, json_response, request
 
-from .core import connectivity, setup_check
-from .core.health import VERDICT_LABELS, assess
-from .core.pricing import CURRENCIES
-from .core.router import (
+from . import catalog, connectivity, preference, setup_check
+from . import router as router_mod
+from .caps import format_limit_rules
+from .health import VERDICT_LABELS, assess
+from .pricing import CURRENCIES
+from .router import (
     BUILTIN_WEB_SEARCH_TOOLS,
     OWN_TOOLS,
     ROUTING_MODES,
     TAVILY_TOOL,
     ToolRouter,
 )
-from .core.uistate import UiState
+from .uistate import UiState
 
 if TYPE_CHECKING:
-    from .main import DeepSeekSearchPlugin
+    from ..main import DeepSeekSearchPlugin
 
 # AstrBot 设置页的网页搜索提供商 -> 会加入请求的内置工具名
 BUILTIN_PROVIDER_TOOLS = {
@@ -56,6 +58,11 @@ BUILTIN_PROVIDER_TOOLS = {
 EDITABLE_FIELDS: dict[str, tuple[type, Any, Any]] = {
     "own_tools_enabled": (bool, None, None),
     "tavily_enabled": (bool, None, None),
+    "tavily_monthly_limit": (int, 0, 1000000),
+    "tool_monthly_limits": (list, None, None),
+    "panel_language": (str, None, None),
+    "search_preference": (str, None, None),
+    "search_order": (list, None, None),
     "search_lane_rules": (list, None, None),
     "routing_mode": (str, None, None),
     "billing_currency": (str, None, None),
@@ -77,6 +84,8 @@ EDITABLE_FIELDS: dict[str, tuple[type, Any, Any]] = {
 STR_CHOICES = {
     "routing_mode": tuple(ROUTING_MODES),
     "billing_currency": tuple(CURRENCIES),
+    "panel_language": ("auto", "zh", "en"),
+    "search_preference": tuple(preference.PRESET_LABELS),
 }
 
 # 调用日志列表的时间范围（小时）
@@ -166,6 +175,7 @@ class WebApi:
             ("diagnostics", self.diagnostics, ["GET"], "诊断信息"),
             ("search-stats", self.search_stats, ["GET"], "各搜索工具用量"),
             ("overview", self.overview, ["GET"], "主力搜索工具和健康状况"),
+            ("search-tools", self.search_tools, ["GET"], "可用的搜索工具和搜索偏好"),
             ("network", self.network, ["GET"], "各搜索工具的网络说明"),
             ("network-check", self.network_check, ["POST"], "检测连通性"),
             ("ignore", self.ignore, ["POST"], "忽略提醒"),
@@ -189,6 +199,13 @@ class WebApi:
         return {
             "own_tools_enabled": r.own_enabled,
             "tavily_enabled": self.plugin.tavily_enabled,
+            "tavily_monthly_limit": self.plugin.tavily.monthly_limit,
+            "tool_monthly_limits": format_limit_rules(self.plugin.tool_caps.rules),
+            "panel_language": self.plugin.panel_language,
+            "search_preference": self._preset(),
+            "search_order": [
+                str(x) for x in (c.get("search_order") or []) if isinstance(x, str)
+            ],
             "search_lane_rules": [
                 f"{desc} = {', '.join(pats)}" for desc, pats in r.lane_rules
             ],
@@ -220,6 +237,11 @@ class WebApi:
             "source": source,
             "usable": usable,
             "reason": why,
+            "month_used": self.plugin.tavily.month_used(),
+            "monthly_limit": self.plugin.tavily.monthly_limit,
+            "limit_reached": self.plugin.tavily.limit_reached(),
+            "usage_text": self.plugin.tavily.usage_text(),
+            "last_failure": self.plugin.tavily.last_failure(),
         }
 
     def status_data(self) -> dict[str, Any]:
@@ -236,6 +258,7 @@ class WebApi:
             "budget": svc.budget.snapshot(),
             "circuit": svc.breaker.snapshot(),
             "today": svc.stats.day(),
+            "tool_caps": self.plugin.tool_caps.snapshot(),
             "settings": self.settings_view(),
         }
 
@@ -291,15 +314,29 @@ class WebApi:
             }
         )
 
-    def search_tool_names(self) -> list[str]:
-        """当前会出现在请求里的搜索类工具（关闭自带搜索时不含 DeepDeep 自己的）。"""
+    def _preset(self) -> str:
+        value = self.plugin.config.get("search_preference", preference.DEFAULT_PRESET)
+        return value if value in preference.PRESET_LABELS else preference.DEFAULT_PRESET
+
+    def search_tool_names(self, include_pref_disabled: bool = False) -> list[str]:
+        """当前会出现在请求里的搜索类工具（关闭自带搜索时不含 DeepDeep 自己的）。
+        ``include_pref_disabled`` 为 True 时保留搜索偏好里设为“不用”的（给偏好设置用）。"""
         router = self.plugin.router
         names = self.current_tool_names()
         if not router.own_enabled:
             names = [n for n in names if n not in OWN_TOOLS]
         if TAVILY_TOOL in names and not self.plugin.tavily_usable(names)[0]:
             names = [n for n in names if n != TAVILY_TOOL]
-        return sorted({n for n in names if router.search_category(n) is not None})
+        blocked = set(self.plugin.tool_caps.blocked(names))
+        if not include_pref_disabled:
+            blocked |= router.disabled_tools(names)
+        return sorted(
+            {
+                n
+                for n in names
+                if router.search_category(n) is not None and n not in blocked
+            }
+        )
 
     def health_data(self, range_key: str = "24h") -> dict[str, dict[str, Any]]:
         """各搜索工具的健康结论：{工具名: {...}}。只做提示，不影响路由。"""
@@ -360,6 +397,7 @@ class WebApi:
                 self.plugin._builtin_web_search(), BUILTIN_PROVIDER_TOOLS
             ),
             plugins=plugins,
+            models=setup_check.check_model_search(self.plugin.model_searches()),
         )
 
     def registered_tools(self) -> dict[str, bool]:
@@ -430,6 +468,79 @@ class WebApi:
             ],
         }
 
+    def catalog_data(self) -> list[dict[str, Any]]:
+        """设置页「可用的搜索工具」：所有认识的搜索工具、擅长什么、当前状态。"""
+        router = self.plugin.router
+        current = self.current_tool_names()
+        return catalog.build(
+            deepseek={
+                "enabled": router.own_enabled,
+                "configured": bool(self.plugin.resolve_key_source()[0]),
+            },
+            tavily=self.tavily_status(),
+            provider_settings=self.plugin._builtin_web_search(),
+            registered=self.registered_tools(),
+            request_tools=current,
+            setup_status=self.setup_data()["tool_status"],
+            health=self.health_data("24h"),
+            search_tools=[n for n in current if router.search_category(n)],
+        )
+
+    def preference_data(self) -> dict[str, Any]:
+        """设置页「搜索偏好」：各个预设下每类场景的工具顺序，切换预设时不用再请求。"""
+        router = self.plugin.router
+        names = self.search_tool_names(include_pref_disabled=True)
+
+        def lists(pref: preference.Preference | None) -> dict[str, list[dict]]:
+            r = router.with_preference(pref)
+            out = {}
+            for scene in preference.SCENES:
+                kept = r.ordered(scene, names)
+                if pref is None and scene == "tech":
+                    # “推荐”下技术问题按分工规则（默认 Tavily 优先）
+                    lane = dict(r.lane_assignments(names)).get(router_mod.TECH_DESC)
+                    if lane in kept:
+                        kept.remove(lane)
+                        kept.insert(0, lane)
+                full = r.with_preference(None).ordered(scene, names)
+                out[scene] = catalog.grouped(kept, False) + catalog.grouped(
+                    [n for n in full if n not in kept], True
+                )
+            return out
+
+        active = self._preset()
+        orders = {
+            key: lists(preference.resolve(key))
+            for key in preference.PRESET_LABELS
+            if key != "custom"
+        }
+        lines = self.plugin.config.get("search_order") or []
+        # 还没自定义过时，“自定义”从当前生效的顺序开始改
+        orders["custom"] = (
+            lists(preference.resolve("custom", lines))
+            if lines
+            else orders.get(active, orders["rec"])
+        )
+        note = ""
+        if router.mode in ("deepseek_first", "deepseek_only"):
+            note = "当前路由模式下，一般问题和读取网页固定先用 DeepSeek；想完全按偏好排，把路由模式改成“只引导”"
+        return {
+            "preset": active,
+            "presets": preference.PRESET_LABELS,
+            "scenes": preference.SCENE_LABELS,
+            "orders": orders,
+            "mode_note": note,
+        }
+
+    async def search_tools(self):
+        def build() -> dict[str, Any]:
+            return {
+                "catalog": self.catalog_data(),
+                "preferences": self.preference_data(),
+            }
+
+        return json_response(await asyncio.to_thread(build))
+
     def overview_data(self, range_key: str = "24h") -> dict[str, Any]:
         names = self.search_tool_names()
         setup, health = self.problems(range_key)
@@ -446,6 +557,9 @@ class WebApi:
             "logging_enabled": self.plugin.recorder.enabled,
             "setup": setup,
             "handled": self.handled_data(),
+            "model_search": self.plugin.model_searches(),
+            # 本月已达调用上限、这个月不再提供的工具
+            "capped": self.plugin.tool_caps.blocked(self.current_tool_names()),
         }
 
     async def overview(self):
@@ -526,6 +640,9 @@ class WebApi:
             "budget": status["budget"],
             "circuit": status["circuit"],
             "today": status["today"],
+            "tavily": status["tavily"],
+            "tool_caps": status["tool_caps"],
+            "model_search": self.plugin.model_searches(),
             "search_tools": tools,
             "search_tool_health": {
                 k: {"verdict": v["verdict"], "reason": v["reason"]}

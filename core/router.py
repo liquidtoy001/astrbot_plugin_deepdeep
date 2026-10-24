@@ -9,9 +9,12 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from typing import Any, Protocol
+
+from .preference import Preference
 
 SEARCH_TOOL = "deepdeep_web_search"
 FETCH_TOOL = "deepdeep_web_fetch"
@@ -81,6 +84,8 @@ DEFAULT_SPECIALIST_RULES = [
 DEFAULT_LANE_RULES = [
     "编程、软件版本、安全漏洞、官方文档等技术问题 = deepdeep_tavily_search, web_search_tavily",
 ]
+# 搜索偏好里“技术问题”对应的分工
+TECH_DESC = "编程、软件版本、安全漏洞、官方文档等技术问题"
 # 有按类型分工时，通用搜索那一行改写成更具体的说明
 GENERAL_DESC = "通用网页搜索（新闻、事实、中文资料等）"
 GENERAL_DESC_WITH_LANES = "新闻时事、中文资料、海外新闻、比赛和最新动态"
@@ -146,6 +151,18 @@ def _alt_rank(name: str, same_backend: bool) -> int:
     ):
         return 3
     return 4
+
+
+def _ordered_line(items: list[str], when: str) -> str:
+    """按偏好排好的一串工具：第一个是首选，其余是备用。"""
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    rest = items[1:]
+    shown = rest[:GUIDE_MAX_PER_LINE]
+    more = f" 等 {len(rest)} 个" if len(rest) > len(shown) else ""
+    return f"优先 {items[0]}；{when}再用 {'、'.join(shown)}{more}"
 
 
 def _general_line(has_own: bool, own: str, alts: list[str], when: str) -> str:
@@ -230,8 +247,11 @@ class ToolRouter:
         specialist_rules: Any = None,
         own_enabled: bool = True,
         lane_rules: Any = None,
+        preference: Preference | None = None,
     ) -> None:
         self.mode = mode if mode in ROUTING_MODES else DEFAULT_MODE
+        # 用户的搜索偏好；None 表示沿用默认顺序（“推荐”预设）
+        self.preference = preference
         # 关闭后，每次请求都把 DeepDeep 自己的两个工具拿掉，交给其他搜索工具
         self.own_enabled = own_enabled
         self.fallback_patterns = _clean_patterns(
@@ -240,11 +260,69 @@ class ToolRouter:
         self.specialist_rules = parse_specialist_rules(specialist_rules)
         self.lane_rules = parse_lane_rules(lane_rules)
 
+    # ---------- 搜索偏好 ----------
+
+    def with_preference(self, preference: Preference | None) -> ToolRouter:
+        """同样的配置、换一个搜索偏好（设置页预览各个预设时用）。"""
+        clone = copy.copy(self)
+        clone.preference = preference
+        return clone
+
+    def _general_candidates(self, present: set[str]) -> list[str]:
+        """一般问题的候选工具（默认顺序）：DeepDeep 搜索在前，其余按推荐顺序。"""
+        own = [SEARCH_TOOL] if SEARCH_TOOL in present else []
+        return own + self._default_alternatives(sorted(present), "search")
+
+    def _fetch_candidates(self, present: set[str]) -> list[str]:
+        own = [FETCH_TOOL] if FETCH_TOOL in present else []
+        return own + self._default_alternatives(sorted(present), "fetch")
+
+    def ordered(self, scene: str, names: list[str] | set[str]) -> list[str]:
+        """某类场景按偏好排好的工具（去掉“不用”的），第一个是首选。"""
+        present = set(names)
+        base = (
+            self._fetch_candidates(present)
+            if scene == "read"
+            else self._general_candidates(present)
+        )
+        if self.preference is None:
+            return base
+        out = self.preference.sort(scene, base)
+        # “DeepSeek 优先 / 只用 DeepSeek”模式下 DeepSeek 固定排第一（其他工具反正会被藏起来）
+        own = FETCH_TOOL if scene == "read" else SEARCH_TOOL
+        if self.mode in ("deepseek_first", "deepseek_only") and own in out:
+            out.remove(own)
+            out.insert(0, own)
+        return out
+
+    def disabled_tools(self, names: list[str]) -> set[str]:
+        """在它参与的所有场景都设为“不用”的工具：每次请求里拿掉。"""
+        if self.preference is None:
+            return set()
+        present = set(names)
+        pref = self.preference
+        out = {
+            n
+            for n in self._general_candidates(present)
+            if pref.is_disabled("general", n) and pref.is_disabled("tech", n)
+        }
+        out |= {
+            n for n in self._fetch_candidates(present) if pref.is_disabled("read", n)
+        }
+        return out
+
     def lane_assignments(self, names: list[str]) -> list[tuple[str, str]]:
         """本次请求里生效的按类型分工：[(问题类型, 首选工具), ...]。"""
         present = sorted(set(names))
         out = []
+        if self.preference is not None:
+            tech = self.ordered("tech", present)
+            if tech:
+                out.append((TECH_DESC, tech[0]))
         for desc, patterns in self.lane_rules:
+            # 有搜索偏好时，技术问题按偏好来
+            if self.preference is not None and desc == TECH_DESC:
+                continue
             for pattern in patterns:
                 hit = next(
                     (n for n in present if fnmatchcase(n.lower(), pattern)), None
@@ -432,10 +510,17 @@ class ToolRouter:
         ]
 
     def alternatives(self, names: list[str], kind: str, reason: str = "") -> list[str]:
-        """本次请求里可以替代 DeepDeep 的通用工具（search / fetch 两类分开）。
+        """本次请求里可以替代 DeepDeep 的通用工具（search / fetch 两类分开），按偏好排序。"""
+        alts = self._default_alternatives(names, kind, reason)
+        if self.preference is None:
+            return alts
+        return self.preference.sort("read" if kind == "fetch" else "general", alts)
 
-        超出费用上限时去掉同样走 DeepSeek 计费的工具；其余按“非 DeepSeek 计费优先”排序。
-        """
+    def _default_alternatives(
+        self, names: list[str], kind: str, reason: str = ""
+    ) -> list[str]:
+        """默认顺序的替代工具。超出费用上限时去掉同样走 DeepSeek 计费的工具；
+        其余按“非 DeepSeek 计费优先”排序。"""
         want_fetch = kind == "fetch"
         alts = [
             n
@@ -453,11 +538,117 @@ class ToolRouter:
             ),
         )
 
+    def _special_groups(self, present: set[str]) -> list[tuple[str, list[str]]]:
+        groups: dict[str, list[str]] = {}
+        for name in sorted(present):
+            desc = self.specialty(name)
+            if desc:
+                groups.setdefault(desc, []).append(name)
+        order = {d or "专用搜索": i for i, (_, d) in enumerate(self.specialist_rules)}
+        return [
+            (desc, groups[desc])
+            for desc in sorted(groups, key=lambda d: order.get(d, len(order)))
+        ]
+
+    def _pref_lanes(self, present: set[str]) -> list[dict[str, Any]]:
+        general = self.ordered("general", present)
+        fetch = self.ordered("read", present)
+        lanes = [
+            (d, t)
+            for d, t in self.lane_assignments(sorted(present))
+            if not general or t != general[0]
+        ]
+        out: list[dict[str, Any]] = []
+        if general:
+            out.append(
+                {
+                    "key": "search",
+                    "title": "通用网页搜索",
+                    "desc": GENERAL_DESC_WITH_LANES
+                    if lanes
+                    else "新闻、事实、中文资料等",
+                    "primary": general[0],
+                    "backups": general[1:],
+                }
+            )
+        for desc, tool in lanes:
+            backups = (
+                [n for n in self.ordered("tech", present) if n != tool]
+                if desc == TECH_DESC
+                else [n for n in general[:1] if n != tool]
+            )
+            out.append(
+                {
+                    "key": f"lane:{desc}",
+                    "title": desc,
+                    "desc": "按问题类型分工",
+                    "primary": tool,
+                    "backups": backups,
+                }
+            )
+        if fetch:
+            out.append(
+                {
+                    "key": "fetch",
+                    "title": "读取网页全文",
+                    "desc": "用户发来链接、摘要不够详细时",
+                    "primary": fetch[0],
+                    "backups": fetch[1:],
+                }
+            )
+        for desc, tools in self._special_groups(present):
+            ranked = sorted(tools, key=lambda n: ("search" not in n.lower(), n))
+            out.append(
+                {
+                    "key": f"special:{desc}",
+                    "title": desc,
+                    "desc": "",
+                    "primary": ranked[0],
+                    "backups": ranked[1:],
+                }
+            )
+        return out
+
+    def _pref_guide(self, present: set[str]) -> str | None:
+        general = self.ordered("general", present)
+        fetch = self.ordered("read", present)
+        special = self._special_groups(present)
+        if not special and len(general) <= 1 and len(fetch) <= 1:
+            return None
+        lanes = [
+            (d, t)
+            for d, t in self.lane_assignments(sorted(present))
+            if not general or t != general[0]
+        ]
+        lines = ["【搜索工具分工】先选最对口的工具，结果不理想时再换："]
+        if general:
+            desc = GENERAL_DESC_WITH_LANES if lanes else GENERAL_DESC
+            lines.append(
+                f"- {desc}：{_ordered_line(general, '没有结果或结果不理想时')}"
+            )
+        for desc, tool in lanes:
+            backups = (
+                [n for n in self.ordered("tech", present) if n != tool]
+                if desc == TECH_DESC
+                else [n for n in general[:1] if n != tool]
+            )[: GUIDE_MAX_PER_LINE - 1]
+            lines.append(
+                f"- {desc}：优先 {tool}"
+                + (f"；不理想时再用 {'、'.join(backups)}" if backups else "")
+            )
+        if fetch:
+            lines.append(f"- 读取网页全文：{_ordered_line(fetch, '读取失败时')}")
+        for desc, tools in special:
+            lines.append(f"- {desc}：{_short_list(tools)}")
+        return "\n".join(lines)
+
     def lanes(self, names: list[str]) -> list[dict[str, Any]]:
         """WebUI 顶部的“主力搜索工具”：每类需求的首选工具和备用工具，与分工说明一致。"""
         present = set(names)
         if not self.own_enabled:
             present -= set(OWN_TOOLS)
+        if self.preference is not None:
+            return self._pref_lanes(present)
         out: list[dict[str, Any]] = []
         assigned = self.lane_assignments(sorted(present))
         for kind, own, title, desc in (
@@ -538,6 +729,8 @@ class ToolRouter:
         没有专用搜索工具时返回 None（只有通用搜索时不需要分工说明）。
         """
         present = set(names)
+        if self.preference is not None:
+            return self._pref_guide(present)
         alt_search = self.alternatives(sorted(present), "search")
         alt_fetch = self.alternatives(sorted(present), "fetch")
         groups: dict[str, list[str]] = {}
