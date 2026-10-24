@@ -30,7 +30,7 @@ from .core.tavily import TavilyClient, TavilySearch
 from .core.web_api import WebApi
 
 PLUGIN_NAME = "astrbot_plugin_deepdeep"
-PLUGIN_VERSION = "v1.0.2"
+PLUGIN_VERSION = "v1.0.3"
 DEEPSEEK_HOST = "api.deepseek.com"
 ROUTING_EXTRA_KEY = "deepdeep_routing"
 
