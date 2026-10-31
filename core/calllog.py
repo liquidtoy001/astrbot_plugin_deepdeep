@@ -14,7 +14,7 @@ import json
 import sqlite3
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +25,11 @@ MAX_ARGS_CHARS = 4000
 MAX_RESULT_CHARS = 8000
 # 每写入这么多条清理一次过期记录
 PRUNE_EVERY = 200
+# 同一会话里，下一次搜索在这么多秒内开始，就算“连续搜索”
+CONSECUTIVE_WINDOW = 180.0
+# 上一次结束后这么多秒内就开始：模型在同一条回复里一起发出的，没有多花一轮 LLM。
+# 实测同一条回复里的间隔是几十毫秒，隔了一轮 LLM 的至少 1.6 秒
+SAME_ROUND_GAP = 0.5
 
 STATUSES = ("running", "ok", "error", "blocked", "empty", "cache_hit", "interrupted")
 
@@ -381,6 +386,18 @@ class CallLog:
             out.append(item)
         return out
 
+    def daily_tool_counts(self, since: float) -> list[dict]:
+        """按本地日期、按工具统计调用次数（不算被拦下的和还在进行的），给用量页的图表用。"""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT date(ts, 'unixepoch', 'localtime') AS day, tool, COUNT(*) AS n "
+                "FROM calls WHERE ts >= ? "
+                "AND status IN ('ok', 'empty', 'cache_hit', 'error', 'interrupted') "
+                "GROUP BY day, tool",
+                [since],
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def tool_health(
         self, since: float | None = None, streak_window: int = 5
     ) -> list[dict]:
@@ -418,6 +435,48 @@ class CallLog:
             item["bad_streak"] = streaks.get(item["tool"], 0)
             out.append(item)
         return out
+
+    def consecutive_searches(
+        self,
+        tools: Iterable[str],
+        since: float | None = None,
+        window: float = CONSECUTIVE_WINDOW,
+    ) -> dict[str, Any]:
+        """连续搜索率：搜索之后，同一会话在 ``window`` 秒内又发起搜索的比例。
+
+        ``tools`` 是算作搜索的工具名。``same_round`` 是其中由模型在同一条回复里
+        一起发出的次数，这些不多花 LLM 调用。没有会话的记录（如连接测试）不算。
+        """
+        names = sorted(set(tools))
+        rows = []
+        if names:
+            marks = ", ".join("?" * len(names))
+            extra, params = ("AND ts >= ?", [since]) if since else ("", [])
+            with self._lock:
+                rows = self._conn.execute(
+                    "SELECT session, ts, duration_ms FROM calls "
+                    f"WHERE session IS NOT NULL AND session != '' AND tool IN ({marks}) "
+                    f"{extra} ORDER BY ts, id",
+                    [*names, *params],
+                ).fetchall()
+        followed = same_round = 0
+        last: dict[str, tuple[float, int | None]] = {}
+        for session, ts, duration_ms in rows:
+            prev = last.get(session)
+            if prev and ts - prev[0] <= window:
+                followed += 1
+                if (
+                    prev[1] is not None
+                    and ts - prev[0] - prev[1] / 1000 < SAME_ROUND_GAP
+                ):
+                    same_round += 1
+            last[session] = (ts, duration_ms)
+        return {
+            "searches": len(rows),
+            "followed": followed,
+            "same_round": same_round,
+            "rate": round(followed / len(rows), 3) if rows else None,
+        }
 
     def summary(self) -> dict[str, Any]:
         with self._lock:

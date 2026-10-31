@@ -393,7 +393,7 @@ class SearchService:
             request_id=rid,
             status=exc.status,
             latency_ms=_ms(started),
-            note=exc.message + ("（已触发熔断）" if opened else ""),
+            note=exc.message + ("（已连续失败，暂停调用）" if opened else ""),
             detail=detail,
         )
         logger.warning(

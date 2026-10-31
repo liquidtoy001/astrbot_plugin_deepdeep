@@ -1,22 +1,27 @@
 import asyncio
+import inspect
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, StarTools, register
 
-from .core import model_search
 from .core.activity import ActivityLog
+from .core.astrbot_view import AstrBotView
 from .core.cache import TTLCache
 from .core.calllog import CallLog
-from .core.caps import ToolCaps, parse_limit_rules
+from .core.caps import ToolCaps, format_limit_rules, parse_limit_rules
 from .core.client import DeepSeekToolsClient, DeepSeekToolsError
+from .core.credentials import Credentials, TavilyGate
+from .core.extra_search import ExtraSearch
 from .core.guard import BudgetGuard, CircuitBreaker
-from .core.preference import DEFAULT_PRESET
+from .core.preference import DEFAULT_PRESET, normalize_preset
 from .core.preference import resolve as resolve_preference
 from .core.pricing import DEFAULT_CURRENCY, get_currency
+from .core.providers import EXTRA_PROVIDERS, EXTRA_TOOLS, OWN_TOOLS, TAVILY_TOOL
+from .core.providers import get as get_provider
 from .core.recorder import ToolCallRecorder
-from .core.router import DEFAULT_MODE, OWN_TOOLS, TAVILY_TOOL, ToolRouter
+from .core.router import DEFAULT_MODE, ToolRouter
 from .core.service import (
     SearchService,
     Settings,
@@ -25,13 +30,13 @@ from .core.service import (
     cfg_int,
     new_request_id,
 )
+from .core.spending import Spending, format_price_rules, parse_price_rules
 from .core.stats import MonthlyCounter, UsageStats
 from .core.tavily import TavilyClient, TavilySearch
 from .core.web_api import WebApi
 
 PLUGIN_NAME = "astrbot_plugin_deepdeep"
-PLUGIN_VERSION = "v1.0.3"
-DEEPSEEK_HOST = "api.deepseek.com"
+PLUGIN_VERSION = "v1.1.0"
 ROUTING_EXTRA_KEY = "deepdeep_routing"
 
 # 这些情况不是 DeepSeek 故障（某个网页抓不到、没搜到、结果相关度低）：
@@ -42,7 +47,7 @@ SOFT_REASONS = {"http_403", "http_404", "empty", "low_quality"}
 @register(
     PLUGIN_NAME,
     "Turino",
-    "AstrBot 搜索管理器：分工协作、自动降级、费用上限与调用日志",
+    "搜索管理器：选对搜索工具，出错自动换，管住花费",
     PLUGIN_VERSION,
 )
 class DeepSeekSearchPlugin(Star):
@@ -59,9 +64,11 @@ class DeepSeekSearchPlugin(Star):
             )
         self.data_dir = data_dir
 
+        self.astrbot = AstrBotView(context)
+        self.credentials = Credentials(self.astrbot, config)
         stats = UsageStats(data_dir / "usage.json" if data_dir else None)
         self.service = SearchService(
-            DeepSeekToolsClient(self._resolve_api_key),
+            DeepSeekToolsClient(self.credentials.deepseek_key),
             Settings(),
             stats=stats,
             budget=BudgetGuard(stats),
@@ -70,14 +77,26 @@ class DeepSeekSearchPlugin(Star):
         )
         self.router = ToolRouter()
         self.tavily = TavilySearch(
-            TavilyClient(self.tavily_keys),
+            TavilyClient(self.credentials.tavily_keys),
             usage=MonthlyCounter(data_dir / "tavily_usage.json" if data_dir else None),
         )
-        self.tavily_enabled = True
+        self.tavily_gate = TavilyGate(self.credentials, self.astrbot, self.tavily)
+        self.extra_search = ExtraSearch(self.astrbot, config)
         # 其他搜索工具的每月调用上限
         self.tool_caps = ToolCaps(
             MonthlyCounter(data_dir / "tool_usage.json" if data_dir else None)
         )
+        self.extra_search.on_billed = self.tool_caps.record
+        self.usd_cny_rate = 0.0
+        self.spending = Spending(
+            stats=stats,
+            budget=self.service.budget,
+            tool_caps=self.tool_caps,
+            tavily_usage=self.tavily.usage,
+            usd_rate=lambda: self.usd_cny_rate,
+            is_search=lambda name: self.router.search_category(name) is not None,
+        )
+        self.service.budget.other_month_cost = self.spending.other_cost
         self.panel_language = "auto"
         self.call_log = self._open_call_log(data_dir)
         self.recorder = ToolCallRecorder(
@@ -119,14 +138,22 @@ class DeepSeekSearchPlugin(Star):
         if ttl != self._cache_ttl:
             svc.cache = TTLCache(ttl)
             self.tavily.cache = TTLCache(ttl)
+            self.extra_search.cache = TTLCache(ttl)
             self._cache_ttl = ttl
-        self.tavily_enabled = bool(c.get("tavily_enabled", True))
+        self.tavily_gate.enabled = bool(c.get("tavily_enabled", True))
         self.tavily.client.timeout = cfg_float(c, "request_timeout", 20, 3, 120)
         self.tavily.default_count = svc.settings.default_count
         self.tavily.max_count = svc.settings.max_count
         self.tavily.max_chars = svc.settings.max_search_chars
         self.tavily.monthly_limit = cfg_int(c, "tavily_monthly_limit", 0, 0, 1000000)
+        extra = self.extra_search
+        extra.client.timeout = self.tavily.client.timeout
+        extra.default_count = svc.settings.default_count
+        extra.max_count = svc.settings.max_count
+        extra.max_chars = svc.settings.max_search_chars
+        extra.sync_tools()
         self.tool_caps.rules = parse_limit_rules(c.get("tool_monthly_limits"))
+        self.spending.custom_prices = parse_price_rules(c.get("custom_prices"))
         lang = str(c.get("panel_language", "auto"))
         self.panel_language = lang if lang in ("auto", "zh", "en") else "auto"
         currency = get_currency(str(c.get("billing_currency", DEFAULT_CURRENCY)))
@@ -158,98 +185,78 @@ class DeepSeekSearchPlugin(Star):
         )
         self.inject_guide = bool(c.get("inject_search_guide", True))
 
-    def resolve_key_source(self) -> tuple[str | None, str]:
-        """返回 (key, 来源说明)。"""
-        key = str(self.config.get("api_key", "") or "").strip()
-        if key:
-            return key, "插件配置"
-        try:
-            providers = self.context.get_all_providers()
-        except Exception:  # noqa: BLE001 - 框架内部异常不应影响搜索
-            return None, ""
-        for provider in providers:
-            pc = getattr(provider, "provider_config", None) or {}
-            if DEEPSEEK_HOST not in str(pc.get("api_base", "")):
-                continue
-            for k in provider.get_keys():
-                if k and k.strip():
-                    return k.strip(), f"复用提供商 {pc.get('id', '')}".strip()
-        return None, ""
+    def settings_view(self) -> dict:
+        """面板上显示的当前设置：apply_config 写进各组件的那些值。"""
+        c = self.config
+        r = self.router
+        svc = self.service
+        return {
+            "own_tools_enabled": r.own_enabled,
+            "tavily_enabled": self.tavily_gate.enabled,
+            "tavily_monthly_limit": self.tavily.monthly_limit,
+            "tool_monthly_limits": format_limit_rules(self.tool_caps.rules),
+            "custom_prices": format_price_rules(self.spending.custom_prices),
+            "panel_language": self.panel_language,
+            "search_preference": normalize_preset(
+                c.get("search_preference", DEFAULT_PRESET)
+            ),
+            "search_order": [
+                str(x) for x in (c.get("search_order") or []) if isinstance(x, str)
+            ],
+            "search_lane_rules": [
+                f"{desc} = {', '.join(pats)}" for desc, pats in r.lane_rules
+            ],
+            "routing_mode": r.mode,
+            "billing_currency": svc.budget.currency.code,
+            "daily_budget": svc.budget.daily_limit,
+            "monthly_budget": svc.budget.monthly_limit,
+            "exchange_rate": self.usd_cny_rate,
+            "fallback_tool_patterns": r.fallback_patterns,
+            "specialist_rules": [
+                f"{p} = {d}" if d else p for p, d in r.specialist_rules
+            ],
+            "inject_search_guide": self.inject_guide,
+            "record_queries": bool(c.get("record_queries", True)),
+            "call_log_enabled": self.recorder.enabled,
+            "call_log_record_other_content": self.recorder.record_other_content,
+            "call_log_retention_days": int(self.call_log.retention_days),
+            "circuit_threshold": svc.breaker.threshold,
+            "circuit_cooldown_seconds": int(svc.breaker.cooldown),
+            "default_count": svc.settings.default_count,
+            "max_count": svc.settings.max_count,
+            "min_rerank_score": svc.settings.min_rerank_score,
+            "include_content": svc.settings.include_content,
+            "content_chars_per_result": svc.settings.content_chars_per_result,
+            "max_search_chars": svc.settings.max_search_chars,
+            "max_fetch_chars": svc.settings.max_fetch_chars,
+            "send_original_question": svc.settings.send_original_question,
+            "cache_ttl_seconds": cfg_int(c, "cache_ttl_seconds", 600, 0, 86400),
+            "request_timeout": cfg_int(c, "request_timeout", 20, 3, 120),
+            "max_retries": cfg_int(c, "max_retries", 2, 0, 5),
+            "qps_limit": cfg_float(c, "qps_limit", 5, 0.1, 5),
+        }
 
-    def _resolve_api_key(self) -> str | None:
-        return self.resolve_key_source()[0]
+    async def update_settings(self, clean: dict) -> None:
+        """保存面板改的设置（已校验）并立即生效。"""
+        config = self.config
+        for k, v in clean.items():
+            config[k] = v
+        saver = getattr(config, "save_config_async", None) or getattr(
+            config, "save_config", None
+        )
+        if saver is not None:
+            result = saver()
+            if inspect.isawaitable(result):
+                await result
+        self.apply_config()
+
+    @property
+    def logging_enabled(self) -> bool:
+        return self.recorder.enabled
 
     @staticmethod
     def resolve_plugin(module: str) -> str | None:
         return _resolve_plugin_name(module)
-
-    def _astrbot_config(self, umo: str | None = None):
-        """AstrBot 配置。传入会话（unified_msg_origin）时取这个会话所用的配置文件，
-        这样给不同会话绑定了不同配置文件时，网页搜索等设置也按会话读取。"""
-        if umo:
-            try:
-                return self.context.get_config(umo=umo)
-            except TypeError:  # 旧版本不支持按会话取配置
-                pass
-        return self.context.get_config()
-
-    def _builtin_web_search(self, umo: str | None = None) -> dict:
-        try:
-            return self._astrbot_config(umo).get("provider_settings", {}) or {}
-        except Exception:  # noqa: BLE001 - 读不到配置时当作没有
-            return {}
-
-    def tavily_key_source(self, umo: str | None = None) -> tuple[list[str], str]:
-        """返回 (Key 列表, 来源说明)。插件配置优先，否则复用 AstrBot 网页搜索里的 Tavily Key。"""
-        own = str(self.config.get("tavily_api_key", "") or "").strip()
-        if own:
-            return [own], "插件配置"
-        keys = self._builtin_web_search(umo).get("websearch_tavily_key") or []
-        if isinstance(keys, str):
-            keys = [keys]
-        keys = [k.strip() for k in keys if isinstance(k, str) and k.strip()]
-        return keys, ("复用 AstrBot 网页搜索的 Tavily Key" if keys else "")
-
-    def tavily_keys(self, umo: str | None = None) -> list[str]:
-        return self.tavily_key_source(umo)[0]
-
-    def tavily_usable(
-        self, names: list[str] | None = None, umo: str | None = None
-    ) -> tuple[bool, str]:
-        """本次请求要不要提供 deepdeep_tavily_search，以及不提供的原因。"""
-        if not self.tavily_enabled:
-            return False, "已在插件设置中关闭"
-        keys = self.tavily_keys(umo)
-        if not keys:
-            return False, "没有找到 Tavily API Key"
-        ps = self._builtin_web_search(umo)
-        builtin = ps.get("web_search") and ps.get("websearch_provider") == "tavily"
-        if builtin or (names and "web_search_tavily" in names):
-            return False, "AstrBot 内置网页搜索已经是 Tavily，避免重复"
-        # 到达每月上限后整个月都不提供（工具列表在这个月内保持不变），下个月自动恢复
-        if self.tavily.limit_reached():
-            return False, f"本月 Tavily 调用已达上限（{self.tavily.usage_text()}）"
-        # 所有 Key 都无效或额度用完：暂停提供，换 Key、到期或重启后恢复
-        paused = self.tavily.paused(keys)
-        if paused:
-            return False, paused
-        return True, ""
-
-    def model_searches(self) -> list[dict]:
-        """开启了内置联网搜索的对话模型（只读提供商配置）。"""
-        try:
-            providers = self.context.get_all_providers()
-        except Exception:  # noqa: BLE001
-            return []
-        default_id = ""
-        try:
-            using = self.context.get_using_provider()
-            default_id = str(
-                (getattr(using, "provider_config", None) or {}).get("id", "")
-            )
-        except Exception:  # noqa: BLE001
-            pass
-        return [m.to_dict() for m in model_search.scan(providers, default_id)]
 
     # ---------- 工具路由 ----------
 
@@ -268,10 +275,13 @@ class DeepSeekSearchPlugin(Star):
         umo = getattr(event, "unified_msg_origin", None)
         managed = any(n in OWN_TOOLS or n == TAVILY_TOOL for n in names)
         # Tavily 不可用（关闭、没有 Key、内置网页搜索已经是 Tavily、本月已达上限、Key 都失效）时只在本次请求里拿掉
-        if TAVILY_TOOL in names and not self.tavily_usable(names, umo)[0]:
+        if TAVILY_TOOL in names and not self.tavily_gate.usable(names, umo)[0]:
             toolset.remove_tool(TAVILY_TOOL)
         # 其他搜索工具本月已达调用上限：同样只在本次请求里拿掉，下个月自动恢复
         for name in self.tool_caps.blocked(names):
+            toolset.remove_tool(name)
+        # 本月估算花费超出上限：付费工具同样只在本次请求里拿掉（DeepSeek 自己的工具走费用上限那一套）
+        for name in self.spending.blocked(toolset.names()):
             toolset.remove_tool(name)
         # 搜索偏好里在所有场景都设为“不用”的工具
         for name in self.router.disabled_tools(toolset.names()):
@@ -411,7 +421,8 @@ class DeepSeekSearchPlugin(Star):
         """给“其他搜索工具每月调用上限”计数：搜索类工具和设了上限的工具，成功的调用才算。
         和调用日志无关（调用日志可能关闭，或只保留十几天）。"""
         name = getattr(tool, "name", "")
-        if not name or name in OWN_TOOLS or name == TAVILY_TOOL:
+        # DeepDeep 自己的工具各记各的：只算真正发出去的请求，缓存命中不算
+        if not name or name in (*OWN_TOOLS, TAVILY_TOOL, *EXTRA_TOOLS):
             return
         if getattr(tool_result, "isError", False):
             return
@@ -484,10 +495,12 @@ class DeepSeekSearchPlugin(Star):
                 f"请改用 {listed} 继续完成任务。"
             )
         umo = getattr(event, "unified_msg_origin", None)
-        ok, why = self.tavily_usable(umo=umo)
+        ok, why = self.tavily_gate.usable(umo=umo)
         if not ok:
             return f"Tavily 搜索暂不可用：{why}。请改用其他搜索工具。"
-        outcome = await self.tavily.search(query, count, self.tavily_keys(umo))
+        outcome = await self.tavily.search(
+            query, count, self.credentials.tavily_keys(umo)
+        )
         if not outcome.should_fallback:
             return outcome.text
         alts = self._tavily_alternatives(event)
@@ -574,6 +587,25 @@ class DeepSeekSearchPlugin(Star):
             "request_id": rid,
         }
 
+    async def run_service_test(self, service: str) -> dict:
+        """面板上的“测试”：真实请求一次，算一次调用。"""
+        if service == "deepseek":
+            return await self.run_connectivity_test()
+        if service == "tavily":
+            return await self._test_tavily()
+        if any(p.key == service for p in EXTRA_PROVIDERS):
+            return await self.extra_search.test(get_provider(service))
+        return {"ok": False, "message": "这个服务不能在这里测试"}
+
+    async def _test_tavily(self) -> dict:
+        keys = self.credentials.tavily_keys()
+        if not keys:
+            return {"ok": False, "message": "没有找到 Tavily API Key"}
+        outcome = await self.tavily.search("DeepSeek", 1, keys)
+        if outcome.should_fallback and outcome.reason != "empty":
+            return {"ok": False, "message": outcome.text.split("\n", 1)[0]}
+        return {"ok": True, "message": "连接正常（本次测试算 1 次调用）"}
+
     async def _log_test(self, rid, status, trace, http_status, error) -> None:
         try:
             await asyncio.to_thread(
@@ -593,7 +625,7 @@ class DeepSeekSearchPlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("deepdeep")
     async def deepdeep_command(self, event: AstrMessageEvent, action: str = "stats"):
-        """DeepSeek 搜索管理：/deepdeep stats 查看用量，/deepdeep test 测试连通性，/deepdeep reset 解除熔断"""
+        """DeepSeek 搜索管理：/deepdeep stats 查看用量，/deepdeep test 测试连通性，/deepdeep reset 解除暂停"""
         action = (action or "stats").strip().lower()
         if action == "test":
             r = await self.run_connectivity_test()
@@ -610,6 +642,13 @@ class DeepSeekSearchPlugin(Star):
                     for r in data["rows"][:8]
                 ]
                 report += "\n近 24 小时各搜索工具调用：" + "、".join(parts)
+            burst = data["consecutive_search"]
+            if burst["searches"]:
+                report += (
+                    f"\n连续搜索率：{burst['rate']:.0%}（{burst['searches']} 次搜索里 "
+                    f"{burst['followed']} 次之后 3 分钟内又搜索，其中 {burst['same_round']} 次"
+                    "是同一条回复里一起发出的，不多花 LLM 调用）"
+                )
             # 面板上点了“忽略”的提醒这里也不再列出
             setup, health = await asyncio.to_thread(self.web.problems, "24h")
             flagged = [
@@ -631,15 +670,17 @@ class DeepSeekSearchPlugin(Star):
             yield event.plain_result(report)
         elif action == "reset":
             self.service.breaker.reset()
-            yield event.plain_result("已解除熔断，下次搜索会重新尝试 DeepSeek。")
+            yield event.plain_result("已解除暂停，下次搜索会重新尝试 DeepSeek。")
         else:
             yield event.plain_result(
-                "用法：/deepdeep stats 查看用量；/deepdeep test 测试连通性；/deepdeep reset 解除熔断"
+                "用法：/deepdeep stats 查看用量；/deepdeep test 测试连通性；/deepdeep reset 解除暂停"
             )
 
     async def terminate(self):
         await self.service.client.close()
         await self.tavily.client.close()
+        await self.extra_search.client.close()
+        self.extra_search.remove_all()
         try:
             self.call_log.close()
         except Exception as exc:  # noqa: BLE001

@@ -4,4 +4,5 @@
 # 发布包（git archive）里不需要的开发文件
 .github/ export-ignore
 tests/ export-ignore
+docs/images/ export-ignore
 pyproject.toml export-ignore

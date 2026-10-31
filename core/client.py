@@ -14,7 +14,9 @@ from urllib.parse import urlsplit
 
 import aiohttp
 
-DEFAULT_BASE_URL = "https://api.deepseek.com"
+from .providers import DEEPSEEK_ENDPOINT
+
+DEFAULT_BASE_URL = DEEPSEEK_ENDPOINT
 SEARCH_PATH = "/v1/tools/search"
 FETCH_PATH = "/v1/tools/fetch"
 

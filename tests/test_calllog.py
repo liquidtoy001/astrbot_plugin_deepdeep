@@ -272,3 +272,62 @@ def test_tool_stats_aggregates_per_tool():
     assert {r["tool"] for r in log.tool_stats(since=clock.t - 10)} == {
         "set_user_nickname"
     }
+
+
+# ---------- 连续搜索率 ----------
+
+
+def _search(log, clock, at, *, tool="s", session="a", ms=100):
+    clock.t = at
+    rid = log.start(tool=tool, source="x", session=session)
+    log.finish(rid, status="ok", duration_ms=ms)
+
+
+def test_consecutive_searches_counts_followups_per_session():
+    clock = Clock()
+    start = clock.t
+    log = CallLog(None, clock=clock)
+    _search(log, clock, start)  # 被 1 秒后的搜索跟上：隔了一轮 LLM
+    _search(log, clock, start + 1, tool="t", ms=2000)  # 被跟上：同一条回复
+    _search(log, clock, start + 3.01)  # 被跟上：正好 180 秒
+    _search(log, clock, start + 183.01)  # 超出窗口，后面没有跟上的
+    _search(log, clock, start + 364, session="b")  # 另一个会话，不算跟上 a
+    _search(log, clock, start + 365, tool="other")  # 不是搜索工具，不算
+    _search(log, clock, start + 366, session=None)  # 没有会话，不算
+    assert log.consecutive_searches(["s", "t"]) == {
+        "searches": 5,
+        "followed": 3,
+        "same_round": 1,
+        "rate": 0.6,
+    }
+    # 时间范围
+    assert log.consecutive_searches(["s", "t"], since=start + 3)["searches"] == 3
+
+
+def test_consecutive_searches_window_is_inclusive_and_stops_after_it():
+    clock = Clock()
+    start = clock.t
+    log = CallLog(None, clock=clock)
+    _search(log, clock, start)
+    _search(log, clock, start + 180)
+    _search(log, clock, start + 360.5)
+    stats = log.consecutive_searches(["s"])
+    assert (stats["searches"], stats["followed"], stats["same_round"]) == (3, 1, 0)
+
+
+def test_consecutive_searches_same_round_needs_a_known_duration():
+    clock = Clock()
+    start = clock.t
+    log = CallLog(None, clock=clock)
+    clock.t = start
+    log.start(tool="s", source="x", session="a")  # 中断的调用没有耗时
+    _search(log, clock, start + 0.1)
+    stats = log.consecutive_searches(["s"])
+    assert (stats["followed"], stats["same_round"]) == (1, 0)
+
+
+def test_consecutive_searches_without_data():
+    log = CallLog(None, clock=Clock())
+    empty = {"searches": 0, "followed": 0, "same_round": 0, "rate": None}
+    assert log.consecutive_searches([]) == empty
+    assert log.consecutive_searches(["s"]) == empty

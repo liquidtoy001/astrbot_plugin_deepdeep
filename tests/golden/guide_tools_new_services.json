@@ -1,0 +1,209 @@
+{
+ "deepseek_keenable / guide_only / rec": {
+  "tools": [
+   "deepdeep_web_search",
+   "deepdeep_web_fetch",
+   "set_user_nickname",
+   "keenable_web_search",
+   "keenable_fetch_page"
+  ],
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：优先 deepdeep_web_search；没有结果或结果不理想时再用 keenable_web_search\n- 读取网页全文：优先 deepdeep_web_fetch；读取失败时再用 keenable_fetch_page\n"
+ },
+ "deepseek_keenable / deepseek_first / rec": {
+  "tools": [
+   "deepdeep_web_search",
+   "deepdeep_web_fetch",
+   "set_user_nickname"
+  ],
+  "system_prompt": ""
+ },
+ "deepseek_keenable / deepseek_only / rec": {
+  "tools": [
+   "deepdeep_web_search",
+   "deepdeep_web_fetch",
+   "set_user_nickname"
+  ],
+  "system_prompt": ""
+ },
+ "deepseek_keenable / guide_only / cheap": {
+  "tools": [
+   "deepdeep_web_search",
+   "deepdeep_web_fetch",
+   "set_user_nickname",
+   "keenable_web_search",
+   "keenable_fetch_page"
+  ],
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：优先 deepdeep_web_search；没有结果或结果不理想时再用 keenable_web_search\n- 读取网页全文：优先 deepdeep_web_fetch；读取失败时再用 keenable_fetch_page\n"
+ },
+ "deepseek_keenable / guide_only / zh": {
+  "tools": [
+   "deepdeep_web_search",
+   "deepdeep_web_fetch",
+   "set_user_nickname",
+   "keenable_web_search",
+   "keenable_fetch_page"
+  ],
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：优先 deepdeep_web_search；没有结果或结果不理想时再用 keenable_web_search\n- 读取网页全文：优先 deepdeep_web_fetch；读取失败时再用 keenable_fetch_page\n"
+ },
+ "no_key_keenable / guide_only / rec": {
+  "tools": [
+   "set_user_nickname",
+   "keenable_web_search",
+   "keenable_fetch_page"
+  ],
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：keenable_web_search\n- 读取网页全文：keenable_fetch_page\n"
+ },
+ "no_key_keenable / deepseek_first / rec": {
+  "tools": [
+   "set_user_nickname",
+   "keenable_web_search",
+   "keenable_fetch_page"
+  ],
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：keenable_web_search\n- 读取网页全文：keenable_fetch_page\n"
+ },
+ "no_key_keenable / deepseek_only / rec": {
+  "tools": [
+   "deepdeep_web_search",
+   "deepdeep_web_fetch",
+   "set_user_nickname"
+  ],
+  "system_prompt": ""
+ },
+ "no_key_keenable / guide_only / cheap": {
+  "tools": [
+   "set_user_nickname",
+   "keenable_web_search",
+   "keenable_fetch_page"
+  ],
+  "system_prompt": ""
+ },
+ "no_key_keenable / guide_only / zh": {
+  "tools": [
+   "set_user_nickname",
+   "keenable_web_search",
+   "keenable_fetch_page"
+  ],
+  "system_prompt": ""
+ },
+ "no_key_unnamed_services / guide_only / rec": {
+  "tools": [
+   "set_user_nickname",
+   "pplx_search",
+   "tinyfish_search",
+   "jina_search",
+   "linkup_search",
+   "you_search",
+   "nimble_search",
+   "serper_search"
+  ],
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：优先 jina_search；没有结果或结果不理想时再用 linkup_search、nimble_search 等 7 个\n"
+ },
+ "no_key_unnamed_services / deepseek_first / rec": {
+  "tools": [
+   "set_user_nickname",
+   "pplx_search",
+   "tinyfish_search",
+   "jina_search",
+   "linkup_search",
+   "you_search",
+   "nimble_search",
+   "serper_search"
+  ],
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：优先 jina_search；没有结果或结果不理想时再用 linkup_search、nimble_search 等 7 个\n"
+ },
+ "no_key_unnamed_services / deepseek_only / rec": {
+  "tools": [
+   "deepdeep_web_search",
+   "deepdeep_web_fetch",
+   "set_user_nickname"
+  ],
+  "system_prompt": ""
+ },
+ "no_key_unnamed_services / guide_only / cheap": {
+  "tools": [
+   "set_user_nickname",
+   "pplx_search",
+   "tinyfish_search",
+   "jina_search",
+   "linkup_search",
+   "you_search",
+   "nimble_search",
+   "serper_search"
+  ],
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：优先 jina_search；没有结果或结果不理想时再用 linkup_search、nimble_search、pplx_search 等 6 个\n"
+ },
+ "no_key_unnamed_services / guide_only / zh": {
+  "tools": [
+   "set_user_nickname",
+   "pplx_search",
+   "tinyfish_search",
+   "jina_search",
+   "linkup_search",
+   "you_search",
+   "nimble_search",
+   "serper_search"
+  ],
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：优先 jina_search；没有结果或结果不理想时再用 linkup_search、nimble_search、pplx_search 等 6 个\n"
+ },
+ "serpapi_with_news / guide_only / rec": {
+  "tools": [
+   "deepdeep_web_search",
+   "deepdeep_web_fetch",
+   "set_user_nickname",
+   "web_search_serpapi",
+   "news_search_serpapi",
+   "image_search_serpapi",
+   "finance_search_serpapi",
+   "scholar_search_serpapi"
+  ],
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：优先 deepdeep_web_search；没有结果或结果不理想时再用 web_search_serpapi、news_search_serpapi\n- 读取网页全文：deepdeep_web_fetch\n- 找图片：image_search_serpapi\n- 股票、汇率等财经行情：finance_search_serpapi\n- 学术论文和期刊：scholar_search_serpapi\n"
+ },
+ "serpapi_with_news / deepseek_first / rec": {
+  "tools": [
+   "deepdeep_web_search",
+   "deepdeep_web_fetch",
+   "set_user_nickname",
+   "image_search_serpapi",
+   "finance_search_serpapi",
+   "scholar_search_serpapi"
+  ],
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：deepdeep_web_search\n- 读取网页全文：deepdeep_web_fetch\n- 找图片：image_search_serpapi\n- 股票、汇率等财经行情：finance_search_serpapi\n- 学术论文和期刊：scholar_search_serpapi\n"
+ },
+ "serpapi_with_news / deepseek_only / rec": {
+  "tools": [
+   "deepdeep_web_search",
+   "deepdeep_web_fetch",
+   "set_user_nickname",
+   "image_search_serpapi",
+   "finance_search_serpapi",
+   "scholar_search_serpapi"
+  ],
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：deepdeep_web_search\n- 读取网页全文：deepdeep_web_fetch\n- 找图片：image_search_serpapi\n- 股票、汇率等财经行情：finance_search_serpapi\n- 学术论文和期刊：scholar_search_serpapi\n"
+ },
+ "serpapi_with_news / guide_only / cheap": {
+  "tools": [
+   "deepdeep_web_search",
+   "deepdeep_web_fetch",
+   "set_user_nickname",
+   "web_search_serpapi",
+   "news_search_serpapi",
+   "image_search_serpapi",
+   "finance_search_serpapi",
+   "scholar_search_serpapi"
+  ],
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：优先 web_search_serpapi；没有结果或结果不理想时再用 news_search_serpapi、deepdeep_web_search\n- 读取网页全文：deepdeep_web_fetch\n- 找图片：image_search_serpapi\n- 股票、汇率等财经行情：finance_search_serpapi\n- 学术论文和期刊：scholar_search_serpapi\n"
+ },
+ "serpapi_with_news / guide_only / zh": {
+  "tools": [
+   "deepdeep_web_search",
+   "deepdeep_web_fetch",
+   "set_user_nickname",
+   "web_search_serpapi",
+   "news_search_serpapi",
+   "image_search_serpapi",
+   "finance_search_serpapi",
+   "scholar_search_serpapi"
+  ],
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：优先 deepdeep_web_search；没有结果或结果不理想时再用 web_search_serpapi、news_search_serpapi\n- 读取网页全文：deepdeep_web_fetch\n- 找图片：image_search_serpapi\n- 股票、汇率等财经行情：finance_search_serpapi\n- 学术论文和期刊：scholar_search_serpapi\n"
+ }
+}

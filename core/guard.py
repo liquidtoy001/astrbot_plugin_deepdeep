@@ -44,6 +44,11 @@ class BudgetGuard:
         self.monthly_limit = max(0.0, monthly_limit)
         self.currency = currency or get_currency(None)
         self.warn_ratio = warn_ratio
+        # 其他付费搜索服务本月的估算花费（见 spending.py）。每月上限管的是合计，每日上限只算 DeepSeek
+        self.other_month_cost: Callable[[], float] = lambda: 0.0
+
+    def month_total(self) -> float:
+        return self.stats.month_cost() + self.other_month_cost()
 
     def check(self, kind: str) -> Availability:
         price = self.stats.price
@@ -58,7 +63,7 @@ class BudgetGuard:
             )
         if (
             self.monthly_limit > 0
-            and self.stats.month_cost() + price > self.monthly_limit + 1e-12
+            and self.month_total() + price > self.monthly_limit + 1e-12
         ):
             return Availability(
                 False,
@@ -74,7 +79,7 @@ class BudgetGuard:
             return None if limit <= 0 else spent / limit
 
         daily_ratio = _ratio(today, self.daily_limit)
-        monthly_ratio = _ratio(month, self.monthly_limit)
+        monthly_ratio = _ratio(self.month_total(), self.monthly_limit)
         return {
             "currency": self.currency.code,
             "symbol": self.currency.symbol,

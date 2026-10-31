@@ -12,7 +12,7 @@ target-version = "py310"
 exclude = ["pages", "*.md"]
 
 [tool.ruff.lint]
-select = ["F", "E", "W", "I", "UP", "B", "ASYNC", "C4", "SIM", "RUF", "BLE", "T20"]
+select = ["F", "E", "W", "I", "UP", "B", "ASYNC", "C4", "SIM", "RUF", "BLE", "T20", "TID251"]
 ignore = [
   "E501",    # 交给 formatter；中文提示文本难以按 88 列断行
   "RUF001",  # 中文字符串里的全角标点
@@ -23,3 +23,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["BLE001", "T20", "ASYNC240"]
 ".github/scripts/*" = ["T20", "BLE001", "E501"]  # 兼容性探针需要输出结果
+
+# AstrBot 插件市场的自动审核会拒绝这些导入，这里提前拦下
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"logging".msg = "插件市场不接受 logging：日志请用 astrbot.api 的 logger（core/log.py 已封装）"
+"requests".msg = "插件市场不接受 requests：它会阻塞事件循环，HTTP 请求请用异步客户端（aiohttp）"

@@ -14,13 +14,21 @@ from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from typing import Any, Protocol
 
+from .guide import GENERAL_DESC_WITH_LANES, TECH_DESC, render_guide
 from .preference import Preference
-
-SEARCH_TOOL = "deepdeep_web_search"
-FETCH_TOOL = "deepdeep_web_fetch"
-OWN_TOOLS = (SEARCH_TOOL, FETCH_TOOL)
-# DeepDeep 自带的 Tavily 搜索：不受“启用自带搜索”开关影响，作为技术类问题的首选和第一备用
-TAVILY_TOOL = "deepdeep_tavily_search"
+from .providers import (
+    ALT_KEYWORDS,
+    DEEPSEEK_BILLED_PATTERNS,
+    EXTRA_FALLBACK_PATTERNS,
+    FETCH_TOOL,
+    KNOWN_SEARCH_TOOLS,
+    OWN_TOOLS,
+    PROVIDERS,
+    SEARCH_TOOL,
+    TAVILY_BUILTIN_SEARCH,
+    TAVILY_TOOL,
+)
+from .providers import get as get_provider
 
 # guide_only：不隐藏任何工具，只靠分工提示安排优先级。工具列表和提示始终不变，
 # 不会因为 DeepSeek 可用性变化而让模型的提示词缓存失效（长上下文时最省钱）
@@ -33,29 +41,14 @@ ROUTING_MODES = (
 )
 DEFAULT_MODE = "guide_only"
 
-# 已知会和 DeepSeek 重复的搜索工具（2026-10 对照插件市场整理，见 README「兼容性」）：
-#   AstrBot 内置网页搜索  web_search_tavily / tavily_extract_web_page / web_search_bocha /
-#                         web_search_brave / web_search_firecrawl / firecrawl_extract_web_page /
-#                         web_search_baidu / web_search_exa / exa_get_contents / web_search_anysearch
-#   web_searcher_pro      searxng_web_search_* / searxng_web_fetch_url
-#   kimi_web_search       kimi_web_search / kimi_web_fetch
-#   grok_web_search       grok_web_search / grok_web_fetch（grok_suite 同名）
-#   mmx_cli_tool          mmx_web_search
-#   anysearch             anysearch_search / anysearch_batch_search / anysearch_extract
-#   gemini_search         gemini_search / web_fetch
-#   exa_web_search        exa-search / web_fetch_exa
-#   同类的 DeepSeek 搜索插件  deepseek_web_search（SkyL3gend）/
-#                         web_search_deepseek、deepseek_fetch_web_page（Fantasality）
+# 可以互相替代的通用搜索工具：先是通用规则，再加上工具名不符合通用规则的各家（见 providers.py）
 DEFAULT_FALLBACK_PATTERNS = [
     "*web_search*",
     "*web_fetch*",
     "*fetch_url*",
     "*fetch_web_page*",
     "*_extract_web_page",
-    "exa_get_contents",
-    "exa-search",
-    "anysearch_*",
-    "gemini_search",
+    *EXTRA_FALLBACK_PATTERNS,
 ]
 # 分工规则：“工具名规则 = 擅长什么”。匹配的工具视为专用搜索，始终保留，
 # 并写进每次请求的“搜索工具分工”提示里。按顺序匹配，第一条命中的生效
@@ -68,68 +61,30 @@ DEFAULT_SPECIALIST_RULES = [
     "*academic* = 学术论文和期刊",
     "*scholar* = 学术论文和期刊",
     "*paper* = 学术论文（arXiv 等）",
-    "*github* = GitHub 上的仓库、代码、Issue 和 PR",
-    "search_repositories = GitHub 上的仓库、代码、Issue 和 PR",
-    "search_code = GitHub 上的仓库、代码、Issue 和 PR",
-    "search_issues = GitHub 上的仓库、代码、Issue 和 PR",
-    "search_pull_requests = GitHub 上的仓库、代码、Issue 和 PR",
+    *get_provider("github").specialist_rules,
     "*aur* = Arch Linux AUR 软件包",
     "*code-context* = 编程文档和代码示例",
     "*webshot* = 网页截图",
-    "astr_kb_search = 本地知识库里的资料",
+    *get_provider("kb").specialist_rules,
+    # 其他专用搜索来源排在最后
+    *(
+        r
+        for p in PROVIDERS
+        if p.key not in ("github", "kb")
+        for r in p.specialist_rules
+    ),
 ]
 
 # 按问题类型分工：“问题类型 = 工具名规则, 工具名规则, …”。本次请求里第一个存在的工具
 # 作为这类问题的首选，其余问题仍先用 DeepDeep。2026-10 评测：技术类问题 Tavily 明显更好
-DEFAULT_LANE_RULES = [
-    "编程、软件版本、安全漏洞、官方文档等技术问题 = deepdeep_tavily_search, web_search_tavily",
-]
-# 搜索偏好里“技术问题”对应的分工
-TECH_DESC = "编程、软件版本、安全漏洞、官方文档等技术问题"
-# 有按类型分工时，通用搜索那一行改写成更具体的说明
-GENERAL_DESC = "通用网页搜索（新闻、事实、中文资料等）"
-GENERAL_DESC_WITH_LANES = "新闻时事、中文资料、海外新闻、比赛和最新动态"
+DEFAULT_LANE_RULES = [f"{TECH_DESC} = {TAVILY_TOOL}, {TAVILY_BUILTIN_SEARCH}"]
 
-# 和本插件用同一个 DeepSeek 账户计费的工具（AstrBot 4.29.1 起内置的 DeepSeek 搜索、
-# 其他 DeepSeek 搜索插件）。因为超出费用上限而降级时，这些工具也保持隐藏，否则会绕过上限
-SAME_BACKEND_PATTERNS = ["*deepseek*"]
+# 因为超出费用上限而降级时，和本插件用同一个 DeepSeek 账户计费的工具也保持隐藏，否则会绕过上限
+SAME_BACKEND_PATTERNS = list(DEEPSEEK_BILLED_PATTERNS)
 BUDGET_REASONS = frozenset({"budget_daily", "budget_monthly"})
 
 # 抓取类工具：只有本次请求里有 deepdeep_web_fetch 时才把它们藏起来
 FETCH_LIKE_PATTERNS = ["*fetch*", "*extract*", "*get_contents*", "*read_page*"]
-
-# 内置网页搜索工具名，用于 WebUI 预览（它们在每次请求时才加入工具集）
-BUILTIN_WEB_SEARCH_TOOLS = [
-    "web_search_tavily",
-    "tavily_extract_web_page",
-    "web_search_bocha",
-    "web_search_brave",
-    "web_search_firecrawl",
-    "firecrawl_extract_web_page",
-    "web_search_baidu",
-    "web_search_exa",
-    "exa_get_contents",
-    "web_search_anysearch",
-    "web_search_serpapi",
-    "image_search_serpapi",
-    "finance_search_serpapi",
-    "scholar_search_serpapi",
-    "web_search_deepseek",
-    "deepseek_fetch_web_page",
-]
-
-
-# 分工提示里每类最多列出的工具数。像 arXiv MCP 这样一类有十来个工具时，
-# 全部列出会让提示变长，模型看到前几个就知道该用哪一组了
-GUIDE_MAX_PER_LINE = 3
-
-
-def _short_list(names: list[str]) -> str:
-    ranked = sorted(names, key=lambda n: ("search" not in n.lower(), n))
-    shown = ranked[:GUIDE_MAX_PER_LINE]
-    rest = len(ranked) - len(shown)
-    text = "、".join(shown)
-    return f"{text} 等 {len(ranked)} 个" if rest > 0 else text
 
 
 def _alt_rank(name: str, same_backend: bool) -> int:
@@ -145,42 +100,9 @@ def _alt_rank(name: str, same_backend: bool) -> int:
         return 1
     if "general" in lowered:
         return 2
-    if any(
-        k in lowered
-        for k in ("news", "technical", "kimi", "grok", "exa", "anysearch", "gemini")
-    ):
+    if any(k in lowered for k in ("news", "technical", *ALT_KEYWORDS)):
         return 3
     return 4
-
-
-def _ordered_line(items: list[str], when: str) -> str:
-    """按偏好排好的一串工具：第一个是首选，其余是备用。"""
-    if not items:
-        return ""
-    if len(items) == 1:
-        return items[0]
-    rest = items[1:]
-    shown = rest[:GUIDE_MAX_PER_LINE]
-    more = f" 等 {len(rest)} 个" if len(rest) > len(shown) else ""
-    return f"优先 {items[0]}；{when}再用 {'、'.join(shown)}{more}"
-
-
-def _general_line(has_own: bool, own: str, alts: list[str], when: str) -> str:
-    """通用搜索那一行：有 DeepDeep 时写清楚先用谁、什么情况再换。"""
-    if has_own and alts:
-        shown = alts[:GUIDE_MAX_PER_LINE]
-        more = f" 等 {len(alts)} 个" if len(alts) > len(shown) else ""
-        return f"优先 {own}；{when}再用 {'、'.join(shown)}{more}"
-    if has_own:
-        return own
-    if not alts:
-        return ""
-    # 没有 DeepDeep 时按推荐顺序列出，第一个就是首选
-    shown = alts[:GUIDE_MAX_PER_LINE]
-    more = f" 等 {len(alts)} 个" if len(alts) > len(shown) else ""
-    if len(shown) == 1:
-        return shown[0]
-    return f"优先 {shown[0]}；{when}再用 {'、'.join(shown[1:])}{more}"
 
 
 class ToolSetLike(Protocol):
@@ -348,7 +270,11 @@ class ToolRouter:
         if name in OWN_TOOLS or self.specialty(name) is not None:
             return False
         lowered = name.lower()
-        return any(fnmatchcase(lowered, p) for p in self.fallback_patterns)
+        # 用户配置里的规则之外，表里认识的工具也算：默认值存进了老用户的配置，新增的规则到不了他们那里
+        return any(
+            fnmatchcase(lowered, p)
+            for p in (*self.fallback_patterns, *KNOWN_SEARCH_TOOLS)
+        )
 
     @staticmethod
     def is_fetch_like(name: str) -> bool:
@@ -385,6 +311,16 @@ class ToolRouter:
             # 被禁用、其他插件自己发起的请求等），什么都不动，免得把唯一的搜索藏掉
             return set()
         if not self.own_enabled:
+            return own
+        # 没有 DeepSeek Key 是长期状态，不是临时故障：只要还有别的搜索或抓取工具，就不让模型
+        # 每次先碰一下必定失败的工具。一个可用工具都没有时保留，让模型拿到明确的说明
+        if (
+            reason == "no_key"
+            and self.mode != "deepseek_only"
+            and (
+                self.alternatives(names, "search") or self.alternatives(names, "fetch")
+            )
+        ):
             return own
         # 只藏 DeepSeek 能替代的那一类：有搜索才藏搜索，有抓取才藏抓取
         # 按类型分工的首选工具（比如技术问题用 Tavily）不藏；“只用 DeepSeek”模式除外
@@ -509,6 +445,30 @@ class ToolRouter:
             for n in sorted(set(names), key=lambda x: (x not in OWN_TOOLS, x))
         ]
 
+    def scenario(
+        self,
+        names: list[str],
+        *,
+        available: bool,
+        reason: str = "",
+        removed: frozenset[str] = frozenset(),
+    ) -> dict[str, Any]:
+        """某种状态下模型实际能用什么，给路由预览用。走的是和真实请求一样的 plan 和 alternatives。
+        ``removed``：路由之前就拿掉的工具（比如超出每月花费上限的付费工具）。"""
+        visible = [n for n in names if n not in removed]
+        hidden = self.plan(visible, available, reason)
+        kept = [n for n in visible if n not in hidden]
+        return {
+            "kept": kept,
+            "hidden": sorted(hidden),
+            "lanes": self.lanes(kept),
+            # DeepSeek 调用失败时，工具结果里建议模型换成这些（见 main._finish）
+            "advice": {
+                kind: self.alternatives(kept, kind, reason)[:3]
+                for kind in ("search", "fetch")
+            },
+        }
+
     def alternatives(self, names: list[str], kind: str, reason: str = "") -> list[str]:
         """本次请求里可以替代 DeepDeep 的通用工具（search / fetch 两类分开），按偏好排序。"""
         alts = self._default_alternatives(names, kind, reason)
@@ -538,7 +498,7 @@ class ToolRouter:
             ),
         )
 
-    def _special_groups(self, present: set[str]) -> list[tuple[str, list[str]]]:
+    def special_groups(self, present: set[str]) -> list[tuple[str, list[str]]]:
         groups: dict[str, list[str]] = {}
         for name in sorted(present):
             desc = self.specialty(name)
@@ -596,7 +556,7 @@ class ToolRouter:
                     "backups": fetch[1:],
                 }
             )
-        for desc, tools in self._special_groups(present):
+        for desc, tools in self.special_groups(present):
             ranked = sorted(tools, key=lambda n: ("search" not in n.lower(), n))
             out.append(
                 {
@@ -608,39 +568,6 @@ class ToolRouter:
                 }
             )
         return out
-
-    def _pref_guide(self, present: set[str]) -> str | None:
-        general = self.ordered("general", present)
-        fetch = self.ordered("read", present)
-        special = self._special_groups(present)
-        if not special and len(general) <= 1 and len(fetch) <= 1:
-            return None
-        lanes = [
-            (d, t)
-            for d, t in self.lane_assignments(sorted(present))
-            if not general or t != general[0]
-        ]
-        lines = ["【搜索工具分工】先选最对口的工具，结果不理想时再换："]
-        if general:
-            desc = GENERAL_DESC_WITH_LANES if lanes else GENERAL_DESC
-            lines.append(
-                f"- {desc}：{_ordered_line(general, '没有结果或结果不理想时')}"
-            )
-        for desc, tool in lanes:
-            backups = (
-                [n for n in self.ordered("tech", present) if n != tool]
-                if desc == TECH_DESC
-                else [n for n in general[:1] if n != tool]
-            )[: GUIDE_MAX_PER_LINE - 1]
-            lines.append(
-                f"- {desc}：优先 {tool}"
-                + (f"；不理想时再用 {'、'.join(backups)}" if backups else "")
-            )
-        if fetch:
-            lines.append(f"- 读取网页全文：{_ordered_line(fetch, '读取失败时')}")
-        for desc, tools in special:
-            lines.append(f"- {desc}：{_short_list(tools)}")
-        return "\n".join(lines)
 
     def lanes(self, names: list[str]) -> list[dict[str, Any]]:
         """WebUI 顶部的“主力搜索工具”：每类需求的首选工具和备用工具，与分工说明一致。"""
@@ -703,14 +630,8 @@ class ToolRouter:
                     "backups": backups,
                 },
             )
-        groups: dict[str, list[str]] = {}
-        for name in sorted(present):
-            desc = self.specialty(name)
-            if desc:
-                groups.setdefault(desc, []).append(name)
-        order = {d or "专用搜索": i for i, (_, d) in enumerate(self.specialist_rules)}
-        for desc in sorted(groups, key=lambda d: order.get(d, len(order))):
-            ranked = sorted(groups[desc], key=lambda n: ("search" not in n.lower(), n))
+        for desc, tools in self.special_groups(present):
+            ranked = sorted(tools, key=lambda n: ("search" not in n.lower(), n))
             out.append(
                 {
                     "key": f"special:{desc}",
@@ -723,59 +644,5 @@ class ToolRouter:
         return out
 
     def guide(self, names: list[str]) -> str | None:
-        """根据本次请求里实际可用的工具，生成“搜索工具分工”提示。
-
-        内容只取决于工具集和配置，工具集不变时提示词保持一致，不会破坏模型的提示词缓存。
-        没有专用搜索工具时返回 None（只有通用搜索时不需要分工说明）。
-        """
-        present = set(names)
-        if self.preference is not None:
-            return self._pref_guide(present)
-        alt_search = self.alternatives(sorted(present), "search")
-        alt_fetch = self.alternatives(sorted(present), "fetch")
-        groups: dict[str, list[str]] = {}
-        for name in sorted(present):
-            desc = self.specialty(name)
-            if desc:
-                groups.setdefault(desc, []).append(name)
-        # 只有 DeepDeep 自己、没有备用和专用工具时不需要分工说明
-        if not groups and not alt_search and not alt_fetch:
-            return None
-        order = {
-            desc or "专用搜索": i for i, (_, desc) in enumerate(self.specialist_rules)
-        }
-        lines = ["【搜索工具分工】先选最对口的工具，结果不理想时再换："]
-        search_line = _general_line(
-            SEARCH_TOOL in present, SEARCH_TOOL, alt_search, "没有结果或结果不理想时"
-        )
-        general_primary = (
-            SEARCH_TOOL
-            if SEARCH_TOOL in present
-            else (alt_search[0] if alt_search else None)
-        )
-        # 通用搜索的首选本身就是这类问题的首选时（比如关闭了自带搜索、Tavily 排第一），不必再单独写一行
-        assigned = [
-            (d, t)
-            for d, t in self.lane_assignments(sorted(present))
-            if t != general_primary
-        ]
-        if search_line:
-            desc = GENERAL_DESC_WITH_LANES if assigned else GENERAL_DESC
-            lines.append(f"- {desc}：{search_line}")
-        for desc, tool in assigned:
-            if SEARCH_TOOL in present:
-                backup = SEARCH_TOOL
-            else:
-                backup = next((n for n in alt_search if n != tool), "")
-            lines.append(
-                f"- {desc}：优先 {tool}"
-                + (f"；不理想时再用 {backup}" if backup else "")
-            )
-        fetch_line = _general_line(
-            FETCH_TOOL in present, FETCH_TOOL, alt_fetch, "读取失败时"
-        )
-        if fetch_line:
-            lines.append(f"- 读取网页全文：{fetch_line}")
-        for desc in sorted(groups, key=lambda d: order.get(d, len(order))):
-            lines.append(f"- {desc}：{_short_list(groups[desc])}")
-        return "\n".join(lines)
+        """本次请求的“搜索工具分工”提示，见 guide.py。"""
+        return render_guide(self, names)

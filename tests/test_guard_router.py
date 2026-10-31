@@ -211,7 +211,7 @@ async def test_breaker_opens_and_blocks(fake_api, no_sleep):
     assert a.should_fallback and b.should_fallback
     assert c.reason == "circuit_open"
     assert len(fake_api.requests) == 2
-    assert "已触发熔断" in svc.activity.recent()[1]["note"]
+    assert "已连续失败，暂停调用" in svc.activity.recent()[1]["note"]
 
 
 async def test_bad_query_does_not_suggest_fallback(fake_api, no_sleep):
@@ -561,3 +561,35 @@ def test_lanes_follow_guide_order():
     ]
     assert lanes["学术论文和期刊"]["primary"] == "scholar_search_serpapi"
     assert "股票、汇率等财经行情" in lanes
+
+
+# ---------- 没有 DeepSeek Key 的用户 ----------
+
+
+def test_no_key_hides_own_tools_when_other_tools_exist():
+    names = ["deepdeep_web_search", "deepdeep_web_fetch", "web_search_bocha"]
+    r = ToolRouter("guide_only")
+    assert r.plan(names, False, "no_key") == {
+        "deepdeep_web_search",
+        "deepdeep_web_fetch",
+    }
+    # 临时故障不隐藏（保持工具列表不变，保护提示词缓存）
+    assert r.plan(names, False, "circuit_open") == set()
+    guide = r.guide(["web_search_bocha"])
+    assert "web_search_bocha" in guide and "deepdeep" not in guide
+
+
+def test_no_key_keeps_own_tools_when_nothing_else_or_deepseek_only():
+    own = ["deepdeep_web_search", "deepdeep_web_fetch"]
+    # 没有别的工具：保留，让模型拿到“未配置”的明确说明
+    assert ToolRouter("guide_only").plan(own, False, "no_key") == set()
+    # 只有专用搜索也不算有替代
+    assert (
+        ToolRouter("guide_only").plan(
+            [*own, "searxng_web_search_images"], False, "no_key"
+        )
+        == set()
+    )
+    # “只用 DeepSeek”不降级
+    names = [*own, "web_search_bocha"]
+    assert not set(own) & ToolRouter("deepseek_only").plan(names, False, "no_key")

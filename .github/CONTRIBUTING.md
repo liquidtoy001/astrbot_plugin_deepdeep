@@ -10,6 +10,10 @@ ruff check . && ruff format --check .
 
 测试不需要安装 AstrBot：`core/` 下的逻辑与框架无关；`tests/test_plugin.py` 用桩模块加载 `main.py` 和 `core/web_api.py`。
 
+加一家新的搜索来源：在 `core/providers.py` 的 `PROVIDERS` 里加一条记录，其他模块都从这张表读。工具名不符合通用规则、需要写 `fallback_patterns` 时，同时改 `_conf_schema.json` 的默认值（有测试检查）；面板英文模式下的说明文字在 `pages/dashboard/i18n.js`。
+
+分工提示和请求里的工具列表一变，用户就要多付一次提示词缓存未命中的钱：`tests/test_golden_guide.py` 逐字节比对，只有确实要改提示词时才重新生成（`DEEPDEEP_UPDATE_GOLDEN=1`）。
+
 在真实 AstrBot 中调试：把仓库目录放到 `data/plugins/` 下，在 WebUI 的插件页重载插件。修改 `pages/` 下的静态文件只需刷新面板。
 
 ## 日志与调试约定

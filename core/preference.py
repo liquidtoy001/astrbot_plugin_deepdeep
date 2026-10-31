@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from typing import Any
 
+from .providers import FETCH_TOOL, SEARCH_TOOL, TAVILY_BUILTIN_SEARCH, TAVILY_TOOL
+
 SCENES = ("general", "tech", "read")
 SCENE_LABELS = {"general": "一般问题", "tech": "技术问题", "read": "读取网页"}
 DEFAULT_PRESET = "rec"
@@ -25,22 +27,23 @@ PRESET_LABELS = {
     "custom": "自定义",
 }
 
-# 预设的顺序。没写到的工具排在后面，保持默认的相对顺序
+# 预设的顺序。这是跨多家的排序策略，不是某一家的事实，所以不放进 providers.py；
+# 没写到的工具排在后面，保持默认的相对顺序，所以加一家新的搜索来源不用改这里
 PRESETS: dict[str, dict[str, list[str]]] = {
     # 免费的先用：自建的 SearXNG，再是有免费额度的 Tavily、Google、Brave、Exa，按次计费的最后
     "cheap": {
         "general": [
             "searxng_*general*",
-            "deepdeep_tavily_search",
-            "web_search_tavily",
+            TAVILY_TOOL,
+            TAVILY_BUILTIN_SEARCH,
             "*serpapi*",
             "web_search_brave",
             "web_search_exa",
             "searxng_*",
         ],
         "tech": [
-            "deepdeep_tavily_search",
-            "web_search_tavily",
+            TAVILY_TOOL,
+            TAVILY_BUILTIN_SEARCH,
             "searxng_*general*",
             "*serpapi*",
         ],
@@ -49,7 +52,7 @@ PRESETS: dict[str, dict[str, list[str]]] = {
     # 中文网站覆盖好的先用
     "zh": {
         "general": [
-            "deepdeep_web_search",
+            SEARCH_TOOL,
             "web_search_bocha",
             "web_search_baidu",
             "kimi_web_search",
@@ -57,12 +60,12 @@ PRESETS: dict[str, dict[str, list[str]]] = {
             "*serpapi*",
         ],
         "tech": [
-            "deepdeep_web_search",
-            "deepdeep_tavily_search",
-            "web_search_tavily",
+            SEARCH_TOOL,
+            TAVILY_TOOL,
+            TAVILY_BUILTIN_SEARCH,
             "*serpapi*",
         ],
-        "read": ["deepdeep_web_fetch", "deepseek_fetch_web_page"],
+        "read": [FETCH_TOOL, "deepseek_fetch_web_page"],
     },
 }
 
@@ -124,9 +127,13 @@ def format_order(
     return out
 
 
+def normalize_preset(preset: Any) -> str:
+    return preset if preset in PRESET_LABELS else DEFAULT_PRESET
+
+
 def resolve(preset: Any, lines: Any = None) -> Preference | None:
     """当前生效的偏好；“推荐”返回 None（沿用默认顺序）。"""
-    preset = preset if preset in PRESET_LABELS else DEFAULT_PRESET
+    preset = normalize_preset(preset)
     if preset == "rec":
         return None
     if preset == "custom":

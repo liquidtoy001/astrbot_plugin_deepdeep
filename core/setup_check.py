@@ -13,17 +13,12 @@ import re
 from pathlib import Path
 from typing import Any
 
+from . import providers
+from .providers import OWN_TOOLS, TAVILY_TOOL
+
 # AstrBot 内置网页搜索：提供商 -> (显示名, 读取 Key 的配置项)。每家各读各的，不会互相复用
 BUILTIN_PROVIDERS: dict[str, tuple[str, str]] = {
-    "tavily": ("Tavily", "websearch_tavily_key"),
-    "bocha": ("博查", "websearch_bocha_key"),
-    "brave": ("Brave", "websearch_brave_key"),
-    "firecrawl": ("Firecrawl", "websearch_firecrawl_key"),
-    "baidu_ai_search": ("百度 AI 搜索", "websearch_baidu_app_builder_key"),
-    "exa": ("Exa", "websearch_exa_key"),
-    "anysearch": ("AnySearch", "websearch_anysearch_key"),
-    "deepseek": ("DeepSeek", "websearch_deepseek_key"),
-    "serpapi": ("SerpApi", "websearch_serpapi_key"),
+    b.id: (b.label, b.key_field) for b in providers.BUILTINS
 }
 
 # 插件配置里代表“主要 API Key”的字段名；全部为空时视为没配好
@@ -34,7 +29,7 @@ SKIP_FIELD_RE = re.compile(r"(interval|ttl|minutes|seconds|limit|count)", re.IGN
 # 必需的服务地址（如 SearXNG 地址）
 SERVICE_URL_RE = re.compile(r"searxng.*url|url.*searxng", re.IGNORECASE)
 
-TAVILY_SIGNUP_URL = "https://app.tavily.com"
+TAVILY_SIGNUP_URL = providers.get("tavily").signup_url
 
 STATUS_ORDER = {"missing": 0, "warn": 1, "info": 2, "ok": 3}
 
@@ -144,22 +139,32 @@ def check_builtin(
 
 
 def check_deepseek(
-    key_source: tuple[str | None, str], own_enabled: bool
+    key_source: tuple[str | None, str],
+    own_enabled: bool,
+    has_alternatives: bool = False,
 ) -> dict[str, Any]:
     item = {
         "key": "deepseek",
         "title": "DeepDeep · DeepSeek 搜索和抓取",
-        "tools": ["deepdeep_web_search", "deepdeep_web_fetch"],
+        "tools": list(OWN_TOOLS),
     }
     if not own_enabled:
         return {**item, "status": "info", "detail": "已在设置中关闭"}
     key, source = key_source
     if key:
         return {**item, "status": "ok", "detail": f"Key 来源：{source}"}
+    if has_alternatives:
+        # 用别的搜索工具的用户不需要 DeepSeek，这不算配置问题
+        return {
+            **item,
+            "status": "info",
+            "detail": "没有配置 DeepSeek Key，自带的 DeepSeek 搜索不启用，由其他搜索工具负责（可选）",
+            "fix": "想用的话，在插件配置里填写 DeepSeek API Key，或在 AstrBot 里添加 api_base 为 https://api.deepseek.com 的 DeepSeek 提供商",
+        }
     return {
         **item,
         "status": "missing",
-        "detail": "没有找到 DeepSeek API Key，DeepDeep 的搜索不可用（会自动引导模型改用其他搜索）",
+        "detail": "没有找到 DeepSeek API Key，也没有其他可用的搜索工具，模型现在无法联网搜索",
         "fix": "在插件配置里填写 DeepSeek API Key，或在 AstrBot 里添加 api_base 为 https://api.deepseek.com 的 DeepSeek 提供商（会自动复用它的 Key）",
     }
 
@@ -168,15 +173,16 @@ def check_tavily(status: dict[str, Any]) -> dict[str, Any]:
     item = {
         "key": "tavily",
         "title": "DeepDeep · Tavily 搜索",
-        "tools": ["deepdeep_tavily_search"],
+        "tools": [TAVILY_TOOL],
     }
     if not status.get("enabled"):
         return {**item, "status": "info", "detail": "已在设置中关闭"}
     if not status.get("configured"):
         return {
             **item,
-            "status": "warn",
-            "detail": "没有找到 Tavily Key：技术类问题会改由 DeepSeek 等其他工具负责",
+            # Tavily 是可选的，没配不算问题；Key 失效、额度用完才提醒
+            "status": "info",
+            "detail": "没有配置 Tavily Key，技术问题由其他搜索工具负责（可选）",
             "fix": "在 AstrBot「配置 → 网页搜索」选 Tavily 并填写 Key（填完可以切回原来的提供商，Key 会保留），"
             "或在 AstrBot 插件配置页给 DeepDeep 单独填写「Tavily API Key」。Tavily 免费额度每月 1000 次",
         }
@@ -219,6 +225,42 @@ def check_tavily(status: dict[str, Any]) -> dict[str, Any]:
     if status.get("usage_text"):
         detail += f"；{status['usage_text']}"
     return {**item, "status": "ok", "detail": detail}
+
+
+def check_extra(status: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Perplexity、Serper 这类由 DeepDeep 提供工具的服务。没填 Key 的不算问题，不列出来。"""
+    out = []
+    for s in status.values():
+        if not s.get("configured"):
+            continue
+        item = {
+            "key": f"extra:{s['service']}",
+            "title": f"DeepDeep · {s['name']}",
+            "tools": [s["tool"]],
+        }
+        failure = s.get("last_failure")
+        if not s.get("enabled"):
+            out.append({**item, "status": "info", "detail": "已填 Key，开关没开"})
+        elif failure:
+            out.append(
+                {
+                    **item,
+                    "key": f"extra:{s['service']}:http_{failure['status']}",
+                    "status": "warn",
+                    "detail": f"最近一次调用失败：{failure['label']}（HTTP {failure['status']}）",
+                    "fix": "在设置页的搜索服务里换一个有效的 Key",
+                }
+            )
+        else:
+            untested = "" if s.get("tested") else "（未实测）"
+            out.append(
+                {
+                    **item,
+                    "status": "ok",
+                    "detail": f"Key 已填写：{s.get('masked')}{untested}",
+                }
+            )
+    return out
 
 
 def check_model_search(models: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -1,13 +1,29 @@
 {
   "metadata": {
     "display_name": "DeepDeep",
-    "short_desc": "Search manager: division of labor, fallback, spending caps and call log",
-    "desc": "Lets DeepSeek search, Tavily, AstrBot's built-in web search and community search plugins work together by specialty: general search, technical questions and specialists for images, videos, papers, GitHub and more. DeepSeek first with automatic fallback on outages or spending caps, search tool health checks, setup checks and network notes, per-tool usage stats, a call log for all tools and a dashboard."
+    "short_desc": "Search manager: picks the right search tool, switches on failure, controls spending",
+    "desc": "Helps your bot pick the right search tool, switches when one fails, and estimates and caps spending across paid search services. It works alongside AstrBot's built-in web search and other search plugins. The dashboard shows status lights, spending and a call log."
   },
   "config": {
     "api_key": {
       "description": "DeepSeek API key",
       "hint": "Leave empty to reuse the key of an existing DeepSeek provider (api_base on api.deepseek.com)."
+    },
+    "perplexity_api_key": {
+      "description": "Perplexity API key (optional)",
+      "hint": "Adds a backup search tool. Default first choices don't change. Not tested live yet."
+    },
+    "serper_api_key": {
+      "description": "Serper API key (optional)",
+      "hint": "Adds a backup search tool. Default first choices don't change. Not tested live yet."
+    },
+    "jina_api_key": {
+      "description": "Jina API key (optional)",
+      "hint": "Adds a backup search tool. Default first choices don't change. Not tested live yet."
+    },
+    "tinyfish_api_key": {
+      "description": "TinyFish API key (optional)",
+      "hint": "Free, but off by default: after entering the key, turn it on under Search services in the dashboard. Not tested live yet."
     },
     "routing_mode": {
       "description": "Routing mode",
@@ -94,7 +110,7 @@
     },
     "monthly_budget": {
       "description": "Monthly spending cap",
-      "hint": "In the billing currency, calendar month. 0 means unlimited."
+      "hint": "The estimated total across paid search services, in your billing currency. 0 means no cap. Counted per calendar month; at the cap, paid tools are not offered for the rest of the month and free ones stay."
     },
     "exchange_rate": {
       "description": "Exchange rate (CNY per USD)",

@@ -8,225 +8,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import Any
 
-from .router import OWN_TOOLS, TAVILY_TOOL
-
-
-@dataclass(frozen=True, slots=True)
-class Entry:
-    key: str
-    name: str
-    # own：DeepDeep 自带；builtin：AstrBot 内置网页搜索；plugin：插件；mcp：MCP 服务；kb：知识库
-    source: str
-    strengths: str
-    cost: str
-    # 属于这一项的工具名规则
-    patterns: tuple[str, ...] = ()
-    # 内置网页搜索：提供商 ID 和 Key 的配置项
-    provider: str = ""
-    key_field: str = ""
-    # 没装时怎么装
-    install: str = ""
-
-
-CATALOG: tuple[Entry, ...] = (
-    Entry(
-        "deepseek",
-        "DeepSeek 搜索",
-        "own",
-        "中文资料覆盖最好，结果带发布日期、相关度和权威度，适合新闻和最新动态",
-        "按次计费，每千次 ¥5（国际站 $0.75）",
-        ("deepdeep_web_search", "deepdeep_web_fetch"),
-    ),
-    Entry(
-        "tavily",
-        "Tavily",
-        "own",
-        "英文和技术资料最好：编程、软件版本、安全漏洞、官方文档",
-        "免费每月 1000 次",
-        (TAVILY_TOOL,),
-    ),
-    Entry(
-        "serpapi",
-        "SerpApi（Google 结果）",
-        "builtin",
-        "返回 Google 的结果，国内外网站都覆盖，另有图片、学术、财经搜索",
-        "免费每月 250 次",
-        ("*serpapi*",),
-        "serpapi",
-        "websearch_serpapi_key",
-    ),
-    Entry(
-        "bocha",
-        "博查搜索",
-        "builtin",
-        "中文网站为主，接口在国内，国内服务器连接稳定",
-        "按次计费",
-        ("web_search_bocha",),
-        "bocha",
-        "websearch_bocha_key",
-    ),
-    Entry(
-        "baidu_ai_search",
-        "百度 AI 搜索",
-        "builtin",
-        "百度的搜索结果，中文网站覆盖广",
-        "按次计费（有免费额度）",
-        ("web_search_baidu",),
-        "baidu_ai_search",
-        "websearch_baidu_app_builder_key",
-    ),
-    Entry(
-        "tavily_builtin",
-        "Tavily（AstrBot 内置）",
-        "builtin",
-        "和 DeepDeep 的 Tavily 是同一个服务，另带网页读取",
-        "免费每月 1000 次（和 DeepDeep 的 Tavily 共用 Key）",
-        ("web_search_tavily", "tavily_extract_web_page"),
-        "tavily",
-        "websearch_tavily_key",
-    ),
-    Entry(
-        "brave",
-        "Brave Search",
-        "builtin",
-        "独立的搜索索引，英文网站为主，注重隐私",
-        "有免费额度",
-        ("web_search_brave",),
-        "brave",
-        "websearch_brave_key",
-    ),
-    Entry(
-        "exa",
-        "Exa",
-        "builtin",
-        "语义搜索：按意思找相似的文章、论文和网站，另带网页读取",
-        "有免费额度",
-        ("web_search_exa", "exa_get_contents"),
-        "exa",
-        "websearch_exa_key",
-    ),
-    Entry(
-        "firecrawl",
-        "Firecrawl",
-        "builtin",
-        "搜索的同时抓取网页全文，适合需要读整页内容的场景",
-        "有免费额度",
-        ("web_search_firecrawl", "firecrawl_extract_web_page"),
-        "firecrawl",
-        "websearch_firecrawl_key",
-    ),
-    Entry(
-        "anysearch",
-        "AnySearch",
-        "builtin",
-        "聚合多家搜索引擎的结果",
-        "按次计费",
-        ("web_search_anysearch",),
-        "anysearch",
-        "websearch_anysearch_key",
-    ),
-    Entry(
-        "deepseek_builtin",
-        "DeepSeek（AstrBot 内置）",
-        "builtin",
-        "AstrBot 4.29.1 起自带的基础版 DeepSeek 搜索，和 DeepDeep 用同一个账户计费",
-        "按次计费，和 DeepDeep 共用 DeepSeek 账户",
-        ("web_search_deepseek", "deepseek_fetch_web_page"),
-        "deepseek",
-        "websearch_deepseek_key",
-    ),
-    Entry(
-        "searxng",
-        "SearXNG（web_searcher_pro 插件）",
-        "plugin",
-        "自建、不花钱，聚合多个搜索引擎，另有图片、视频、新闻、学术等分类搜索",
-        "免费（需要自建 SearXNG）",
-        ("searxng_*",),
-        install="在 AstrBot 插件市场搜索 web_searcher_pro 安装，并自建 SearXNG",
-    ),
-    Entry(
-        "kimi",
-        "Kimi 联网搜索",
-        "plugin",
-        "月之暗面的联网搜索，中文资料好",
-        "按次计费",
-        ("kimi_web_search", "kimi_web_fetch"),
-        install="在 AstrBot 插件市场搜索 kimi_web_search 安装",
-    ),
-    Entry(
-        "grok",
-        "Grok 搜索",
-        "plugin",
-        "包含 X（推特）上的实时内容，适合追热点",
-        "按次计费",
-        ("grok_web_search", "grok_web_fetch"),
-        install="在 AstrBot 插件市场搜索 grok_web_search 安装",
-    ),
-    Entry(
-        "gemini",
-        "Gemini 搜索",
-        "plugin",
-        "借 Gemini 用 Google 搜索并总结",
-        "有免费额度",
-        ("gemini_search",),
-        install="在 AstrBot 插件市场搜索 gemini_search 安装",
-    ),
-    Entry(
-        "exa_plugin",
-        "Exa（插件）",
-        "plugin",
-        "Exa 语义搜索的插件版",
-        "有免费额度",
-        ("exa-search", "web_fetch_exa"),
-        install="在 AstrBot 插件市场搜索 exa_web_search 安装",
-    ),
-    Entry(
-        "anysearch_plugin",
-        "AnySearch（插件）",
-        "plugin",
-        "AnySearch 聚合搜索的插件版，支持批量搜索",
-        "按次计费",
-        ("anysearch_*",),
-        install="在 AstrBot 插件市场搜索 anysearch 安装",
-    ),
-    Entry(
-        "github",
-        "GitHub 搜索（MCP）",
-        "mcp",
-        "直接搜 GitHub 上的仓库、代码、Issue 和 PR",
-        "免费",
-        (
-            "search_repositories",
-            "search_code",
-            "search_issues",
-            "search_pull_requests",
-            "*github*",
-        ),
-        install="在 AstrBot「MCP」里添加 GitHub 官方 MCP 服务",
-    ),
-    Entry(
-        "arxiv",
-        "arXiv 论文（MCP）",
-        "mcp",
-        "搜索和下载 arXiv 论文",
-        "免费",
-        ("*paper*", "*arxiv*"),
-        install="在 AstrBot「MCP」里添加 arXiv MCP 服务",
-    ),
-    Entry(
-        "kb",
-        "本地知识库",
-        "kb",
-        "只查 AstrBot 里上传的资料，不联网",
-        "免费",
-        ("astr_kb_search",),
-        install="在 AstrBot「知识库」里创建并给人格启用",
-    ),
-)
+from . import providers
+from .providers import CATALOG, FETCH_TOOL, OWN_TOOLS
+from .providers import Listing as Entry
 
 SOURCE_LABELS = {
     "own": "DeepDeep 自带",
@@ -269,7 +56,7 @@ def entry_for(tool: str) -> Entry | None:
 
 def label_for(tool: str) -> str:
     """工具名对应的通俗名字（偏好排序里显示），认不出来时返回工具名本身。"""
-    if tool == "deepdeep_web_fetch":
+    if tool == FETCH_TOOL:
         return "DeepSeek 读网页"
     entry = entry_for(tool)
     if entry is None:
@@ -333,6 +120,50 @@ def _health_status(tools: list[str], health: dict[str, dict[str, Any]]) -> str:
     return "unstable" if verdicts & {"broken", "degraded"} else ""
 
 
+def _price_field(
+    key: str, prices: dict[str, tuple[float, str]], billing: str
+) -> dict[str, Any]:
+    """表里没有价格的服务：用户可以自己填每千次价格。"""
+    amount, cur = prices.get(key, (None, billing))
+    return {"key": key, "amount": amount, "currency": cur}
+
+
+def _service_fields(
+    e: Entry,
+    deepseek: dict[str, Any],
+    tavily: dict[str, Any],
+    extra: dict[str, dict[str, Any]],
+    prices: dict[str, tuple[float, str]],
+    billing: str,
+) -> dict[str, Any]:
+    """设置页服务卡片要的东西：注册地址、评测成绩，DeepDeep 自带的服务还有开关和填 Key 的地方。"""
+    provider = providers.of_listing(e.key)
+    out: dict[str, Any] = {
+        "signup_url": provider.signup_url,
+        # 设置页的筛选：免费 / 付费、国内 / 国外
+        "free": provider.free,
+        "free_quota": bool(provider.pricing and provider.pricing.free_monthly),
+        "region": provider.networks[0].region if provider.networks else "",
+    }
+    if not (provider.free or provider.pricing or provider.key == "deepseek"):
+        out["price"] = _price_field(provider.key, prices, billing)
+    if e.source != "own":
+        return out
+    state = {"deepseek": deepseek, "tavily": tavily, **extra}.get(e.key, {})
+    # 还没有在真实接口上跑过
+    out["untested"] = provider.api is not None and not provider.api.tested
+    out["enabled_field"] = provider.enabled_field
+    out["enabled"] = bool(state.get("enabled"))
+    out["key_input"] = {
+        "service": provider.key,
+        "masked": state.get("masked") or "",
+        "source": state.get("source") or "",
+        # 只有存在 DeepDeep 自己配置里的 Key 才能在这里清除；复用 AstrBot 的不归这里管
+        "own": state.get("source") == "插件配置",
+    }
+    return out
+
+
 def build(
     *,
     deepseek: dict[str, Any],
@@ -343,11 +174,17 @@ def build(
     setup_status: dict[str, str],
     health: dict[str, dict[str, Any]],
     search_tools: list[str] = (),
+    extra: dict[str, dict[str, Any]] | None = None,
+    prices: dict[str, tuple[float, str]] | None = None,
+    billing: str = "cny",
 ) -> list[dict[str, Any]]:
-    """``deepseek``：{"enabled", "configured"}；``tavily``：WebApi.tavily_status()；
+    """``deepseek``：{"enabled", "configured"}；``tavily``：TavilyGate.status()；
     ``registered``：已注册的工具 {名字: 是否启用}；``request_tools``：会出现在请求里的工具（含内置网页搜索）；
     ``setup_status``：配置检查给出的 {工具名: missing/warn}；``health``：健康检测 {工具名: {...}}；
-    ``search_tools``：路由认出的搜索类工具（目录里没有的也列出来）。"""
+    ``search_tools``：路由认出的搜索类工具（目录里没有的也列出来）；
+    ``extra``：ExtraSearch.status()。"""
+    extra = extra or {}
+    prices = prices or {}
     ps = provider_settings or {}
     current = str(ps.get("websearch_provider") or "") if ps.get("web_search") else ""
     seen: set[str] = set()
@@ -361,6 +198,8 @@ def build(
             }
         )
         seen.update(tools)
+        if not tools and not e.show_when_missing:
+            continue
         status, detail = "", ""
         if e.key == "deepseek":
             if not deepseek.get("enabled"):
@@ -385,9 +224,23 @@ def build(
             else:
                 status = _health_status(tools, health) or "ok"
                 detail = tavily.get("usage_text") or ""
+        elif e.source == "own":
+            state = extra.get(e.key, {})
+            failure = state.get("last_failure")
+            if not state.get("configured"):
+                status, detail = "no_key", "在这里填写 Key 就能用"
+            elif not state.get("enabled"):
+                status, detail = "off", "已填 Key，打开开关后才提供给模型"
+            elif failure:
+                status = "unstable"
+                detail = (
+                    f"最近一次调用失败：{failure['label']}（HTTP {failure['status']}）"
+                )
+            else:
+                status = _health_status(tools, health) or "ok"
         elif e.source == "builtin":
-            filled = _filled(ps.get(e.key_field))
-            if current == e.provider:
+            filled = _filled(ps.get(e.builtin.key_field))
+            if current == e.builtin.id:
                 if filled:
                     status = _health_status(tools, health) or "active"
                 else:
@@ -397,7 +250,7 @@ def build(
                 status = "ready"
                 detail = (
                     "DeepDeep 的 Tavily 正在用这个 Key"
-                    if e.provider == "tavily" and tavily.get("usable")
+                    if e.builtin.id == "tavily" and tavily.get("usable")
                     else f"内置网页搜索同一时间只能选一家，想用它的话在 {WHERE_BUILTIN}切换"
                 )
             else:
@@ -428,6 +281,7 @@ def build(
                 "detail": detail,
                 "tools": tools,
                 "_rank": rank,
+                **_service_fields(e, deepseek, tavily, extra, prices, billing),
             }
         )
     # 认不出来的其他搜索工具也列出来，免得漏掉
@@ -454,6 +308,7 @@ def build(
                 "detail": "",
                 "tools": [t],
                 "_rank": rank,
+                "price": _price_field(f"tool:{t}", prices, billing),
             }
         )
     out.sort(key=lambda x: x["_rank"])

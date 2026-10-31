@@ -3,20 +3,20 @@
         "type": "string",
         "description": "DeepSeek API Key",
         "default": "",
-        "hint": "留空时自动复用 AstrBot 中已配置的 DeepSeek 官方提供商（api_base 为 api.deepseek.com）的 Key",
+        "hint": "留空时自动使用 AstrBot 里已配置的 DeepSeek 官方提供商的 Key",
         "secret": true
     },
     "own_tools_enabled": {
         "type": "bool",
         "description": "启用 DeepDeep 自带的搜索和抓取",
         "default": true,
-        "hint": "关闭后不再向模型提供 deepdeep_web_search / deepdeep_web_fetch（只在每次请求里拿掉，不改 AstrBot 的工具开关），改由其他搜索工具负责；分工说明、调用日志、健康检测照常工作。适合改用 AstrBot 自带的 DeepSeek 搜索等工具时使用"
+        "hint": "关闭后模型不再使用 DeepDeep 自带的 DeepSeek 搜索和抓取，改用其他搜索工具"
     },
     "tavily_enabled": {
         "type": "bool",
         "description": "启用 DeepDeep 自带的 Tavily 搜索",
         "default": true,
-        "hint": "提供 deepdeep_tavily_search，作为技术类问题（编程、软件版本、安全漏洞、官方文档）的首选和 DeepSeek 的第一备用。Key 默认复用 AstrBot「网页搜索」里配置的 Tavily Key，所以内置网页搜索选别家（如 SerpApi）时也能同时用 Tavily。没有 Key、或内置网页搜索本身就是 Tavily 时自动不提供"
+        "hint": "技术问题默认先用它，也是 DeepSeek 的第一备用。没有 Key 时自动不提供"
     },
     "tavily_api_key": {
         "type": "string",
@@ -25,13 +25,70 @@
         "hint": "留空时复用 AstrBot「网页搜索」里配置的 Tavily Key",
         "secret": true
     },
+    "perplexity_api_key": {
+        "type": "string",
+        "description": "Perplexity API Key（可选）",
+        "default": "",
+        "hint": "填了就多一个备用的搜索工具，不改默认首选。"
+    },
+    "perplexity_enabled": {
+        "invisible": true,
+        "type": "bool",
+        "description": "启用 perplexity 搜索",
+        "default": true
+    },
+    "serper_api_key": {
+        "type": "string",
+        "description": "Serper API Key（可选）",
+        "default": "",
+        "hint": "填了就多一个备用的搜索工具（Google 结果），不改默认首选。"
+    },
+    "serper_enabled": {
+        "invisible": true,
+        "type": "bool",
+        "description": "启用 serper 搜索",
+        "default": true
+    },
+    "jina_api_key": {
+        "type": "string",
+        "description": "Jina API Key（可选）",
+        "default": "",
+        "hint": "填了就多一个备用的搜索工具，不改默认首选。"
+    },
+    "jina_enabled": {
+        "invisible": true,
+        "type": "bool",
+        "description": "启用 jina 搜索",
+        "default": true
+    },
+    "tinyfish_api_key": {
+        "type": "string",
+        "description": "TinyFish API Key（可选）",
+        "default": "",
+        "hint": "免费，但默认关闭：填了 Key 还要在面板的搜索服务里打开。"
+    },
+    "tinyfish_enabled": {
+        "invisible": true,
+        "type": "bool",
+        "description": "启用 tinyfish 搜索",
+        "default": false
+    },
     "tavily_monthly_limit": {
+        "invisible": true,
         "type": "int",
         "description": "Tavily 每月调用上限（次）",
         "default": 0,
         "hint": "按自然月统计 deepdeep_tavily_search 成功的调用（缓存命中不算），保存在插件数据目录。达到上限后本月不再提供这个工具，技术问题改由其他搜索负责，下个月自动恢复。0 表示不限制。Tavily 免费额度每月 1000 次，和 AstrBot 内置的 Tavily 搜索共用同一个 Key 时，建议设得比 1000 小一些"
     },
+    "custom_prices": {
+        "invisible": true,
+        "type": "list",
+        "description": "搜索服务的单价",
+        "default": [],
+        "hint": "每行“服务 = 每千次价格 币种”，比如 bocha = 36 cny。在面板的搜索服务里填写。填了才计入每月花费，超出上限时也一起拿掉"
+    },
     "tool_monthly_limits": {
+        "invisible": true,
         "type": "list",
         "description": "其他搜索工具每月调用上限",
         "default": [],
@@ -43,9 +100,10 @@
         "default": "rec",
         "options": ["rec", "cheap", "zh", "custom"],
         "labels": ["推荐（按评测）", "省钱优先", "中文资料优先", "自定义"],
-        "hint": "每类问题先用哪个搜索工具。推荐：按 2026-10 评测的默认顺序；省钱优先：自建和有免费额度的先用；中文资料优先：中文网站覆盖好的先用；自定义：按下面的「自定义搜索顺序」。在插件面板的「设置」页可以直接拖顺序"
+        "hint": "推荐：按评测得出的默认顺序。省钱优先：免费的先用。中文资料优先：中文网站覆盖好的先用。自定义：在插件面板的“设置”页调整"
     },
     "search_order": {
+        "invisible": true,
         "type": "list",
         "description": "自定义搜索顺序",
         "default": [],
@@ -57,9 +115,10 @@
         "default": "auto",
         "options": ["auto", "zh", "en"],
         "labels": ["跟随 AstrBot", "中文", "English"],
-        "hint": "插件面板显示的语言。跟随 AstrBot 时按 AstrBot 管理面板当前的语言显示"
+        "hint": "选“跟随 AstrBot”时，按 AstrBot 管理面板的语言显示"
     },
     "routing_mode": {
+        "invisible": true,
         "type": "string",
         "description": "搜索路由模式",
         "default": "guide_only",
@@ -80,6 +139,7 @@
         "hint": "“只引导”不隐藏任何工具，只在分工说明里写清先用谁、什么情况再换；工具列表始终不变，不会让模型的提示词缓存失效，长对话最省钱。“DeepSeek 优先”会在 DeepSeek 可用时隐藏同类工具，选择更集中，但每次切换都会让缓存失效一次"
     },
     "billing_currency": {
+        "invisible": true,
         "type": "string",
         "description": "计费币种",
         "default": "cny",
@@ -94,24 +154,27 @@
         "hint": "按你的 DeepSeek 账户计费方式选择。费用统计和费用上限都按这个币种计算"
     },
     "daily_budget": {
+        "invisible": true,
         "type": "float",
-        "description": "每日费用上限",
+        "description": "DeepSeek 每日费用上限",
         "default": 0.0,
-        "hint": "按计费币种计算，0 表示不限制。达到上限后当天自动降级到其他搜索工具"
+        "hint": "只算 DeepSeek，按计费币种计算，0 表示不限制。达到上限后当天自动降级到其他搜索工具"
     },
     "monthly_budget": {
         "type": "float",
-        "description": "每月费用上限",
+        "description": "每月花费上限",
         "default": 30.0,
-        "hint": "按计费币种计算，0 表示不限制。按自然月统计，达到上限后当月自动降级"
+        "hint": "所有付费搜索服务的估算花费合计，0 表示不限制。达到后当月不再提供付费工具，免费的继续用"
     },
     "exchange_rate": {
+        "invisible": true,
         "type": "float",
         "description": "汇率（1 美元兑人民币）",
         "default": 7.1,
         "hint": "只用于把费用换算成另一种币种显示，不影响费用上限。填 0 不显示换算"
     },
     "fallback_tool_patterns": {
+        "invisible": true,
         "type": "list",
         "description": "备用搜索工具（匹配规则）",
         "default": [
@@ -128,6 +191,7 @@
         "hint": "可以互相替代的通用搜索工具（支持 * 通配）：DeepSeek 可用时隐藏，不可用时放出。默认已覆盖 AstrBot 内置网页搜索和插件市场里常见的搜索插件；匹配了分工规则的工具不算备用"
     },
     "specialist_rules": {
+        "invisible": true,
         "type": "list",
         "description": "搜索分工规则",
         "default": [
@@ -152,6 +216,7 @@
         "hint": "每条写成“工具名规则 = 擅长什么”，支持 * 通配。匹配的工具视为专用搜索：始终保留、不当作备用，并写进“搜索工具分工”提示，让模型按需求选工具"
     },
     "search_lane_rules": {
+        "invisible": true,
         "type": "list",
         "description": "按问题类型分工",
         "default": [
@@ -160,112 +225,131 @@
         "hint": "每条写成“问题类型 = 工具名规则, 工具名规则”（支持 * 通配）。本次请求里第一个存在的工具作为这类问题的首选，写进分工说明；其余问题仍先用 DeepDeep。2026-10 评测：技术类问题 Tavily 明显好于 DeepSeek，加上这条后结果质量平均从 7.2 提高到 8.4（满分 10）"
     },
     "inject_search_guide": {
+        "invisible": true,
         "type": "bool",
         "description": "向模型说明搜索工具分工",
         "default": true,
         "hint": "在每次请求的系统提示末尾加一小段分工说明，只列出本次实际可用的工具。内容随工具集固定，不影响提示词缓存"
     },
     "circuit_threshold": {
+        "invisible": true,
         "type": "int",
-        "description": "熔断阈值（连续失败次数）",
+        "description": "连续失败几次后暂停",
         "default": 3,
         "hint": "DeepSeek 连续失败这么多次后暂停使用一段时间。余额不足或 Key 无效时立即暂停 30 分钟"
     },
     "circuit_cooldown_seconds": {
+        "invisible": true,
         "type": "int",
-        "description": "熔断冷却时间（秒）",
+        "description": "暂停多久（秒）",
         "default": 300
     },
     "default_count": {
+        "invisible": true,
         "type": "int",
         "description": "默认搜索结果数",
         "default": 5,
         "hint": "模型未指定数量时使用。计费按请求次数，与结果数无关，但结果越多占用上下文越多。插件每次会向 DeepSeek 要至少 10 条（不额外计费），用于补足低相关的结果和找出日期最新的结果"
     },
     "max_count": {
+        "invisible": true,
         "type": "int",
         "description": "单次搜索结果数上限",
         "default": 10,
         "hint": "限制模型一次最多要多少条结果，最大 50"
     },
     "min_rerank_score": {
+        "invisible": true,
         "type": "float",
         "description": "最低相关度",
         "default": 0.5,
         "hint": "低于该值的结果会被丢弃（范围 0–3）。刚发布的内容分数往往偏低，查询中带 after:/before: 时不按分数过滤。达到阈值的不足 3 条时，用排在后面的结果补足并标明相关度较低"
     },
     "include_content": {
+        "invisible": true,
         "type": "bool",
         "description": "搜索时附带网页正文",
         "default": false,
         "hint": "开启后每条结果附带部分正文，信息更多但更占上下文。一般用 summary 就够了"
     },
     "content_chars_per_result": {
+        "invisible": true,
         "type": "int",
         "description": "每条结果正文字数上限",
         "default": 800,
         "hint": "仅在开启“附带网页正文”时生效"
     },
     "max_search_chars": {
+        "invisible": true,
         "type": "int",
         "description": "搜索结果总字数上限",
         "default": 6000,
         "hint": "返回给模型的搜索结果总长度上限，超出时按条截断"
     },
     "max_fetch_chars": {
+        "invisible": true,
         "type": "int",
         "description": "网页抓取字数上限",
         "default": 8000,
         "hint": "抓取的网页正文超过该长度时截断"
     },
     "send_original_question": {
+        "invisible": true,
         "type": "bool",
         "description": "附带用户原始问题",
         "default": true,
         "hint": "把触发搜索的用户消息（前 128 字）作为 ori_question 发给 DeepSeek，帮助理解查询意图"
     },
     "cache_ttl_seconds": {
+        "invisible": true,
         "type": "int",
         "description": "缓存时长（秒）",
         "default": 600,
         "hint": "相同查询在该时间内直接返回缓存，不再计费。设为 0 关闭缓存"
     },
     "request_timeout": {
+        "invisible": true,
         "type": "int",
         "description": "请求超时（秒）",
         "default": 20
     },
     "max_retries": {
+        "invisible": true,
         "type": "int",
         "description": "失败重试次数",
         "default": 2,
         "hint": "仅对限流（429）、超时和服务端错误重试"
     },
     "qps_limit": {
+        "invisible": true,
         "type": "float",
         "description": "本地限速（每秒请求数）",
         "default": 5,
         "hint": "官方限制为搜索、抓取各 5 QPS（按账号计算）。多个程序共用同一账号时请调低"
     },
     "record_queries": {
+        "invisible": true,
         "type": "bool",
         "description": "在 WebUI 中显示最近的搜索词",
         "default": true,
         "hint": "只保存在内存里（最近 100 条），重启清空。关闭后只记录调用结果，不记录搜索词和链接"
     },
     "call_log_enabled": {
+        "invisible": true,
         "type": "bool",
         "description": "记录工具调用日志",
         "default": true,
         "hint": "记录所有工具（不只是 DeepSeek）的调用，保存在插件数据目录的 calls.db，可在插件面板中筛选、查看和导出"
     },
     "call_log_record_other_content": {
+        "invisible": true,
         "type": "bool",
         "description": "记录其他工具的完整参数和结果",
         "default": false,
         "hint": "默认只记录其他工具的名称、来源、耗时和状态。开启后还会保存它们的调用参数和返回结果（可能包含用户的聊天内容），便于排查"
     },
     "call_log_retention_days": {
+        "invisible": true,
         "type": "int",
         "description": "调用日志保留天数",
         "default": 14,

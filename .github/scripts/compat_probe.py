@@ -114,6 +114,19 @@ def _context():
 check("Context: register_web_api 等", _context)
 
 
+def _extra_tools():
+    # Perplexity、Serper 等服务的工具靠这两个方法按需注册和移除，靠 FunctionTool 子类实现
+    from astrbot.core.agent.tool import FunctionTool
+    from astrbot.core.star.context import Context
+
+    return has_methods(Context, ["add_llm_tools", "unregister_llm_tool"]) and callable(
+        getattr(FunctionTool, "call", None)
+    )
+
+
+check("Context: add_llm_tools / unregister_llm_tool、FunctionTool.call", _extra_tools)
+
+
 def _register_web_api_signature():
     from astrbot.core.star.context import Context
 

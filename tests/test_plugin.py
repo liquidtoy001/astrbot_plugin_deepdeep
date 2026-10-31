@@ -13,6 +13,7 @@ import docstring_parser
 import pytest
 import yaml
 from conftest import make_result
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
@@ -57,6 +58,21 @@ CURRENT_REQUEST = FakeRequest()
 
 class ErrorResponse(dict):
     pass
+
+
+@pydantic_dataclass
+class StubFunctionTool:
+    """和 AstrBot 的 FunctionTool 一样是 pydantic dataclass。"""
+
+    name: str
+    description: str
+    parameters: dict
+    handler: object = None
+    handler_module_path: str | None = None
+    active: bool = True
+
+    async def call(self, context, **kwargs):
+        raise NotImplementedError
 
 
 def _install_astrbot_stubs():
@@ -125,8 +141,15 @@ def _install_astrbot_stubs():
     web.error_response = lambda message, status_code=400, **_: ErrorResponse(
         error=message, status_code=status_code
     )
+    core = types.ModuleType("astrbot.core")
+    agent = types.ModuleType("astrbot.core.agent")
+    agent_tool = types.ModuleType("astrbot.core.agent.tool")
+    agent_tool.FunctionTool = StubFunctionTool
     sys.modules.update(
         {
+            "astrbot.core": core,
+            "astrbot.core.agent": agent,
+            "astrbot.core.agent.tool": agent_tool,
             "astrbot": types.ModuleType("astrbot"),
             "astrbot.api": api,
             "astrbot.api.event": event,
@@ -218,6 +241,12 @@ class FakeContext:
 
     def get_llm_tool_manager(self):
         return self._tools
+
+    def add_llm_tools(self, *tools):
+        self._tools.func_list.extend(tools)
+
+    def unregister_llm_tool(self, name):
+        self._tools.func_list = [t for t in self._tools.func_list if t.name != name]
 
     def _set_active(self, name, active):
         tool = next((t for t in self._tools.func_list if t.name == name), None)
@@ -361,12 +390,18 @@ def test_api_key_resolution(plugin_module):
         ]
     )
     plugin = P(ctx, FakeConfig({"api_key": ""}))
-    assert plugin.resolve_key_source() == ("sk-deepseek", "复用提供商 deepseek")
-    assert P(ctx, FakeConfig({"api_key": " sk-own "}))._resolve_api_key() == "sk-own"
+    assert plugin.credentials.deepseek_key_source() == (
+        "sk-deepseek",
+        "复用提供商 deepseek",
+    )
+    assert (
+        P(ctx, FakeConfig({"api_key": " sk-own "})).credentials.deepseek_key()
+        == "sk-own"
+    )
     assert (
         P(
             FakeContext([FakeProvider("https://opencode.ai", ["x"])]), FakeConfig()
-        )._resolve_api_key()
+        ).credentials.deepseek_key()
         is None
     )
 
@@ -696,6 +731,43 @@ async def test_search_stats_endpoint_only_counts_search_tools(plugin_module):
     await plugin.terminate()
 
 
+async def test_search_stats_reports_consecutive_search_rate(plugin_module):
+    plugin = make_plugin(plugin_module)
+    event = FakeEvent()
+    event.unified_msg_origin = "aiocqhttp:GroupMessage:a"
+    for name in (
+        "web_search_tavily",
+        "deepdeep_web_fetch",  # 读网页、知识库和其他工具都不算搜索
+        "astr_kb_search",
+        "set_user_nickname",
+        "web_search_tavily",
+    ):
+        t = FakeTool(name)
+        await plugin.record_tool_start(event, t, {})
+        res = types.SimpleNamespace(
+            content=[types.SimpleNamespace(text="r")], isError=False
+        )
+        await plugin.record_tool_end(event, t, {}, res)
+    data = await api(plugin, "search-stats")()
+    assert data["consecutive_search"]["searches"] == 2
+    assert data["consecutive_search"]["followed"] == 1
+    assert data["consecutive_search"]["rate"] == 0.5
+    report = ""
+    async for r in plugin.deepdeep_command(FakeEvent(), "stats"):
+        report = r
+    assert "连续搜索率：50%（2 次搜索里 1 次" in report
+    await plugin.terminate()
+
+
+async def test_deepdeep_stats_hides_consecutive_rate_without_searches(plugin_module):
+    plugin = make_plugin(plugin_module)
+    report = ""
+    async for r in plugin.deepdeep_command(FakeEvent(), "stats"):
+        report = r
+    assert "连续搜索率" not in report
+    await plugin.terminate()
+
+
 async def test_route_injects_search_guide(plugin_module):
     plugin = make_plugin(plugin_module)
     toolset = FakeToolSet(SEARCH_TOOLS)
@@ -948,7 +1020,7 @@ async def test_tavily_tool_reuses_builtin_key(plugin_module, fake_api):
         websearch_provider="serpapi", websearch_tavily_key=["tvly-builtin"]
     )
     plugin.tavily.client.api_url = f"{fake_api.base_url}/search"
-    assert plugin.tavily_key_source() == (
+    assert plugin.credentials.tavily_key_source() == (
         ["tvly-builtin"],
         "复用 AstrBot 网页搜索的 Tavily Key",
     )
@@ -995,7 +1067,7 @@ async def test_tavily_tool_reuses_builtin_key(plugin_module, fake_api):
     _, toolset, _ = await routed(plugin)
     assert "deepdeep_tavily_search" not in toolset.names()
     plugin.tavily.client._wall = lambda: time.time() + 24 * 3600 + 1
-    assert plugin.tavily_usable()[0]
+    assert plugin.tavily_gate.usable()[0]
     await plugin.terminate()
 
 
@@ -1286,7 +1358,9 @@ async def test_tavily_reads_per_session_config(plugin_module, fake_api):
         event_a, types.SimpleNamespace(func_tool=toolset, system_prompt="")
     )
     assert "deepdeep_tavily_search" not in toolset.names()  # 避免和内置 Tavily 重复
-    assert plugin.tavily_keys("aiocqhttp:GroupMessage:a") == ["tvly-group-a"]
+    assert plugin.credentials.tavily_keys("aiocqhttp:GroupMessage:a") == [
+        "tvly-group-a"
+    ]
     # 群 B 用默认配置：照常提供，并用默认配置的 Key
     event_b = FakeEvent()
     event_b.unified_msg_origin = "aiocqhttp:GroupMessage:b"
@@ -1459,4 +1533,247 @@ async def test_search_preference_endpoint_and_route(plugin_module):
     assert req.system_prompt == baseline
     CURRENT_REQUEST.body = {"search_preference": "best"}
     assert "search_preference" in (await api(plugin, "settings", "POST")())["error"]
+    await plugin.terminate()
+
+
+async def test_no_deepseek_key_removes_own_tools_from_request(plugin_module):
+    plugin = plugin_module.DeepSeekSearchPlugin(
+        FakeContext(web_search_provider="tavily"), FakeConfig({})
+    )
+    assert plugin.service.availability("search").code == "no_key"
+    toolset = FakeToolSet(SEARCH_TOOLS)
+    req = types.SimpleNamespace(func_tool=toolset, system_prompt="")
+    await plugin.route_search_tools(FakeEvent(), req)
+    assert "deepdeep_web_search" not in toolset.names()
+    assert "deepdeep_web_search" not in req.system_prompt
+    assert "web_search_tavily" in req.system_prompt
+    # 面板的主力工具和实际请求一致
+    assert "deepdeep_web_search" not in plugin.web.search_tool_names()
+    data = await api(plugin, "overview")()
+    deepseek = next(it for it in data["setup"]["items"] if it["key"] == "deepseek")
+    assert deepseek["status"] == "info"
+    await plugin.terminate()
+
+
+async def test_today_cards_count_every_search_tool(plugin_module):
+    # 没有 DeepSeek Key：只用博查和 Keenable 的用户也能看到搜索次数
+    plugin = plugin_module.DeepSeekSearchPlugin(FakeContext(), FakeConfig({}))
+    log = plugin.call_log
+    for tool, source, status in (
+        ("web_search_bocha", "builtin", "ok"),
+        ("web_search_bocha", "builtin", "error"),
+        ("keenable_web_search", "plugin:k", "empty"),
+        ("keenable_fetch_page", "plugin:k", "ok"),
+        ("deepdeep_web_search", "deepseek", "cache_hit"),
+        ("web_search_brave", "builtin", "blocked"),
+        ("astr_kb_search", "builtin", "ok"),
+        ("set_user_nickname", "plugin:x", "ok"),
+    ):
+        log.add(tool=tool, source=source, status=status)
+    # 昨天的不算
+    now = log._clock
+    log._clock = lambda: now() - 3 * 86400
+    log.add(tool="web_search_bocha", source="builtin", status="ok")
+    log._clock = now
+    data = (await api(plugin, "status")())["today_tools"]
+    assert data["logging_enabled"] is True
+    assert data["search"] == {
+        "total": 4,
+        "deepseek": 1,
+        "cache_hit": 1,
+        "empty": 1,
+        "failed": 1,
+    }
+    assert data["fetch"]["total"] == 1 and data["fetch"]["deepseek"] == 0
+    await plugin.terminate()
+
+
+# ---------- 在面板里填 Key ----------
+
+
+def _no_secret(data, secret):
+    assert secret not in json.dumps(data, ensure_ascii=False, default=str)
+
+
+async def test_keys_saved_masked_and_never_returned(plugin_module):
+    logged = []
+    plugin = plugin_module.DeepSeekSearchPlugin(FakeContext(), FakeConfig({}))
+    secret = "sk-very-secret-value-123456"
+    sys.modules["astrbot.api"].logger.info = lambda msg: logged.append(msg)
+    save = api(plugin, "keys", "POST")
+    CURRENT_REQUEST.body = {"service": "deepseek", "key": f"  {secret} "}
+    data = await save()
+    assert data["changed"] is True
+    assert plugin.config["api_key"] == secret  # 存进 DeepDeep 自己的配置
+    assert plugin.config.saved == 1
+    assert plugin.credentials.deepseek_key() == secret
+    assert data["status"]["key"]["masked"] == "sk-****3456"
+    _no_secret(data, secret)
+    _no_secret(logged, secret)
+    assert any("sk-****3456" in m for m in logged)
+    for route in ("overview", "search-tools", "status", "diagnostics"):
+        _no_secret(await api(plugin, route)(), secret)
+    await plugin.terminate()
+
+
+async def test_empty_key_submit_keeps_saved_key_and_clear_is_explicit(plugin_module):
+    plugin = plugin_module.DeepSeekSearchPlugin(
+        FakeContext(), FakeConfig({"tavily_api_key": "tvly-saved-12345678"})
+    )
+    save = api(plugin, "keys", "POST")
+    for body in (
+        {"service": "tavily", "key": ""},
+        {"service": "tavily", "key": "   "},
+        {"service": "tavily"},
+        {"service": "tavily", "key": None},
+        {"service": "tavily", "clear": "yes"},
+    ):
+        CURRENT_REQUEST.body = body
+        assert (await save())["changed"] is False, body
+        assert plugin.config["tavily_api_key"] == "tvly-saved-12345678"
+    assert plugin.config.saved == 0
+    CURRENT_REQUEST.body = {"service": "tavily", "clear": True}
+    assert (await save())["changed"] is True
+    assert plugin.config["tavily_api_key"] == ""
+    await plugin.terminate()
+
+
+async def test_key_api_rejects_bad_input_and_builtin_services(plugin_module):
+    ctx = FakeContext()
+    before = json.dumps(ctx._config, sort_keys=True)
+    plugin = plugin_module.DeepSeekSearchPlugin(ctx, FakeConfig({}))
+    save = api(plugin, "keys", "POST")
+    for body in (
+        {"service": "bocha", "key": "x"},  # AstrBot 内置的归 AstrBot 管
+        {"service": "serpapi", "key": "x"},
+        {"service": "", "key": "x"},
+        {"service": "deepseek", "key": "has space"},
+        {"service": "deepseek", "key": "x" * 600},
+    ):
+        CURRENT_REQUEST.body = body
+        assert "error" in await save(), body
+    assert json.dumps(ctx._config, sort_keys=True) == before
+    assert not plugin.config.get("api_key")
+    # 普通的设置接口不能写 Key
+    CURRENT_REQUEST.body = {"api_key": "sk-sneaky", "tavily_api_key": "tvly-sneaky"}
+    await api(plugin, "settings", "POST")()
+    assert "api_key" not in plugin.config
+    assert "tavily_api_key" not in plugin.config
+    await plugin.terminate()
+
+
+async def test_own_field_still_wins_over_astrbot_key(plugin_module):
+    ctx = FakeContext()
+    ctx._config["provider_settings"]["websearch_tavily_key"] = ["tvly-astrbot"]
+    plugin = plugin_module.DeepSeekSearchPlugin(ctx, FakeConfig({}))
+    save = api(plugin, "keys", "POST")
+    CURRENT_REQUEST.body = {"service": "tavily", "key": "tvly-own-12345678"}
+    await save()
+    assert plugin.credentials.tavily_keys() == ["tvly-own-12345678"]
+    CURRENT_REQUEST.body = {"service": "tavily", "clear": True}
+    await save()
+    # 清除的只是 DeepDeep 自己的，AstrBot 的还在
+    assert plugin.credentials.tavily_keys() == ["tvly-astrbot"]
+    assert ctx._config["provider_settings"]["websearch_tavily_key"] == ["tvly-astrbot"]
+    await plugin.terminate()
+
+
+async def test_quick_start_only_when_no_search_works(plugin_module):
+    own = ["deepdeep_web_search", "deepdeep_web_fetch", "deepdeep_tavily_search"]
+    empty = plugin_module.DeepSeekSearchPlugin(
+        FakeContext(tool_names=own), FakeConfig({})
+    )
+    data = await api(empty, "overview")()
+    assert data["search_ready"] is False
+    assert [s["service"] for s in data["key_services"]][:2] == ["deepseek", "tavily"]
+    # 填了 Key 就够了
+    CURRENT_REQUEST.body = {"service": "deepseek", "key": "sk-new-key-12345678"}
+    await api(empty, "keys", "POST")()
+    assert (await api(empty, "overview")())["search_ready"] is True
+    await empty.terminate()
+    # 没有 DeepSeek Key，但有博查
+    bocha = plugin_module.DeepSeekSearchPlugin(
+        FakeContext(tool_names=own, web_search_provider="bocha"), FakeConfig({})
+    )
+    assert (await api(bocha, "overview")())["search_ready"] is True
+    await bocha.terminate()
+
+
+async def test_overview_lanes_speak_plainly(plugin_module):
+    ctx = FakeContext(
+        tool_names=[
+            "deepdeep_web_search",
+            "deepdeep_web_fetch",
+            "deepdeep_tavily_search",
+        ]
+    )
+    ctx._config["provider_settings"]["websearch_tavily_key"] = ["tvly-x"]
+    plugin = plugin_module.DeepSeekSearchPlugin(ctx, FakeConfig({"api_key": "sk-x"}))
+    lanes = {x["plain"]: x for x in (await api(plugin, "overview")())["lanes"]}
+    assert lanes["一般问题"]["primary_label"] == "DeepSeek 搜索"
+    assert lanes["技术问题"]["primary_label"] == "Tavily"
+    assert lanes["读取网页"]["primary_label"] == "DeepSeek 读网页"
+    await plugin.terminate()
+
+
+async def test_tavily_can_be_tested_from_the_panel(plugin_module, fake_api):
+    ctx = FakeContext()
+    plugin = plugin_module.DeepSeekSearchPlugin(ctx, FakeConfig({}))
+    plugin.tavily.client.api_url = f"{fake_api.base_url}/search"
+    test = api(plugin, "test", "POST")
+    CURRENT_REQUEST.body = {"service": "tavily"}
+    assert (await test())["ok"] is False  # 还没有 Key
+    plugin.config["tavily_api_key"] = "tvly-x-12345678"
+    fake_api.tavily_queue.append((200, TAVILY_HIT, {}))
+    assert (await test())["ok"] is True
+    fake_api.tavily_queue.append((401, {"detail": {"error": "bad key"}}, {}))
+    CURRENT_REQUEST.body = {"service": "tavily"}
+    plugin.tavily.cache.clear()
+    assert (await test())["ok"] is False
+    CURRENT_REQUEST.body = {"service": "nope"}
+    assert (await test())["ok"] is False
+    await plugin.terminate()
+
+
+def test_hidden_config_fields_stay_reachable_from_the_panel(plugin_module):
+    """_conf_schema.json 里藏起来的项，面板上要能改，否则用户就改不了了。"""
+    web_api = sys.modules["astrbot_plugin_deepdeep.core.web_api"]
+    schema = json.loads((PLUGIN_ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+    hidden = {k for k, v in schema.items() if v.get("invisible")}
+    assert hidden and hidden <= set(web_api.EDITABLE_FIELDS)
+    visible = set(schema) - hidden
+    assert {"api_key", "tavily_api_key", "monthly_budget"} <= visible
+    assert len(visible) <= 12
+    html = (PLUGIN_ROOT / "pages" / "dashboard" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    # 搜索偏好和顺序在“偏向”里，不是表单字段
+    # 各服务的开关在服务卡片上，由接口数据生成
+    for key in {k for k in hidden if not k.endswith("_enabled")} - {
+        "search_order",
+        "custom_prices",
+    }:
+        assert f'name="{key}"' in html, key
+
+
+async def test_nothing_configured_is_reported_as_missing(plugin_module):
+    # 注册了 Tavily 工具但没有 Key，不能算“有别的搜索工具”
+    ctx = FakeContext(
+        tool_names=[
+            "deepdeep_web_search",
+            "deepdeep_web_fetch",
+            "deepdeep_tavily_search",
+        ]
+    )
+    plugin = plugin_module.DeepSeekSearchPlugin(ctx, FakeConfig({}))
+    data = await api(plugin, "overview")()
+    deepseek = next(it for it in data["setup"]["items"] if it["key"] == "deepseek")
+    assert deepseek["status"] == "missing" and data["setup"]["missing"] == 1
+    # 请求里保留自带工具，让模型拿到“未配置”的明确说明
+    toolset = FakeToolSet(
+        ["deepdeep_web_search", "deepdeep_web_fetch", "deepdeep_tavily_search"]
+    )
+    req = types.SimpleNamespace(func_tool=toolset, system_prompt="")
+    await plugin.route_search_tools(FakeEvent(), req)
+    assert toolset.names() == ["deepdeep_web_search", "deepdeep_web_fetch"]
     await plugin.terminate()

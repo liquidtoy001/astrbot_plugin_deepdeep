@@ -21,10 +21,11 @@ from typing import Any
 import aiohttp
 
 from .cache import TTLCache
+from .providers import TAVILY_ENDPOINT, TAVILY_TOOL
 from .stats import MonthlyCounter
 
-API_URL = "https://api.tavily.com/search"
-TOOL_NAME = "deepdeep_tavily_search"
+API_URL = f"{TAVILY_ENDPOINT}/search"
+TOOL_NAME = TAVILY_TOOL
 MAX_QUERY_CHARS = 400
 SNIPPET_CHARS = 600
 RETRYABLE = frozenset({408, 429, 500, 502, 503, 504})
@@ -227,7 +228,9 @@ def format_results(
             break
         blocks.append(block)
         used += len(block) + 2
-    footer = "结果大多不带发布日期；问最新动态时请以 deepdeep_web_search 的结果和日期为准。回答时请注明来源链接。"
+    footer = (
+        "结果大多不带发布日期，问最新动态时请留意信息是否过时。回答时请注明来源链接。"
+    )
     return "\n\n".join([header, *blocks, footer])
 
 

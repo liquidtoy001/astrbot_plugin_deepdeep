@@ -84,7 +84,7 @@ def test_deepseek_and_tavily_items():
     assert sc.check_deepseek((None, ""), True)["status"] == "missing"
     assert sc.check_deepseek(("k", "插件配置"), True)["status"] == "ok"
     assert sc.check_deepseek((None, ""), False)["status"] == "info"
-    assert sc.check_tavily({"enabled": True, "configured": False})["status"] == "warn"
+    assert sc.check_tavily({"enabled": True, "configured": False})["status"] == "info"
     assert sc.check_tavily({"enabled": False})["status"] == "info"
     assert (
         sc.check_tavily(
@@ -108,7 +108,15 @@ def test_deepseek_and_tavily_items():
 def test_build_sorts_problems_first_and_maps_tools():
     result = sc.build(
         deepseek=sc.check_deepseek(("k", "s"), True),
-        tavily=sc.check_tavily({"enabled": True, "configured": False}),
+        tavily=sc.check_tavily(
+            {
+                "enabled": True,
+                "configured": True,
+                "usable": True,
+                "source": "插件配置",
+                "last_failure": {"status": 401, "label": "Key 无效"},
+            }
+        ),
         builtin=sc.check_builtin({"web_search": False}, BUILTIN_TOOLS),
         plugins=[
             sc.check_plugin(
@@ -161,3 +169,10 @@ def test_tavily_key_failure_is_a_warning_with_fix():
         }
     )
     assert capped["status"] == "info" and "已达上限" in capped["detail"]
+
+
+def test_no_deepseek_key_is_not_a_problem_when_other_tools_exist():
+    item = sc.check_deepseek((None, ""), True, has_alternatives=True)
+    assert item["status"] == "info" and "其他搜索工具负责" in item["detail"]
+    alone = sc.check_deepseek((None, ""), True, has_alternatives=False)
+    assert alone["status"] == "missing" and "无法联网搜索" in alone["detail"]
