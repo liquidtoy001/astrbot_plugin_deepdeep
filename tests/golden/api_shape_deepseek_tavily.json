@@ -355,7 +355,7 @@
   ".groups[].region_label:str",
   ".groups[].tools[]:str",
   ".last_check:NoneType",
-  ".searxng_url:str"
+  ".searxng_url:NoneType"
  ],
  "search-stats": [
   ".consecutive_search.followed:int",

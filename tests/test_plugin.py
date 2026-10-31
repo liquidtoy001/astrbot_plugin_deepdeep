@@ -164,7 +164,9 @@ def _install_astrbot_stubs():
 @pytest.fixture
 def plugin_module(tmp_path):
     star_tools = _install_astrbot_stubs()
-    star_tools.data_dir = tmp_path
+    # 和 AstrBot 一样放两层：插件会到上两级找 config 目录，这样读不到其他测试留下的文件
+    star_tools.data_dir = tmp_path / "data" / "plugin_data" / "astrbot_plugin_deepdeep"
+    star_tools.data_dir.mkdir(parents=True)
     CURRENT_REQUEST.query.clear()
     CURRENT_REQUEST.body = None
     # main.py 使用相对导入，需要作为包加载
@@ -426,7 +428,9 @@ async def test_tools_end_to_end(plugin_module, fake_api, tmp_path):
 
     stats = [r async for r in plugin.deepdeep_command(FakeEvent(), "stats")]
     assert "计费 1 次" in stats[0]
-    assert (tmp_path / "usage.json").exists()
+    assert (
+        tmp_path / "data" / "plugin_data" / "astrbot_plugin_deepdeep" / "usage.json"
+    ).exists()
 
     fake_api.search_queue.append((200, {"results": [make_result(9)]}, {}))
     test = [r async for r in plugin.deepdeep_command(FakeEvent(), "test")]
@@ -992,7 +996,8 @@ async def test_overview_flags_broken_tools_without_changing_routing(plugin_modul
 
 async def test_network_endpoint_reads_searxng_url(plugin_module, tmp_path):
     plugin = make_plugin(plugin_module)
-    config_dir = tmp_path.parent.parent / "config"
+    # 放在这个测试自己的目录里，别的测试读不到
+    config_dir = tmp_path / "network_test" / "config"
     plugin.data_dir = config_dir.parent / "plugin_data" / "astrbot_plugin_deepdeep"
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "astrbot_plugin_web_search_pro_config.json").write_text(
@@ -1138,9 +1143,15 @@ async def test_tavily_monthly_limit_removes_tool_until_next_month(
     fake_api.tavily_queue.append((200, TAVILY_HIT, {}))
     assert "成功" in await plugin.deepdeep_tavily_search(event, "python 3.14", 2)
     # 计数保存在插件数据目录
-    assert json.loads((tmp_path / "tavily_usage.json").read_text()) == {
-        "2026-10": {"total": 1}
-    }
+    assert json.loads(
+        (
+            tmp_path
+            / "data"
+            / "plugin_data"
+            / "astrbot_plugin_deepdeep"
+            / "tavily_usage.json"
+        ).read_text()
+    ) == {"2026-10": {"total": 1}}
     # 本次请求里工具还在：直接回复已达上限，并建议改用 DeepDeep，不再发请求
     sent = len(fake_api.requests)
     text = await plugin.deepdeep_tavily_search(event, "python 3.15", 2)
@@ -1405,7 +1416,13 @@ async def test_other_tool_monthly_limit(plugin_module, tmp_path):
     await plugin.route_search_tools(event, req)
     assert not [n for n in toolset.names() if n.startswith("searxng_")]
     assert "searxng_" not in req.system_prompt
-    assert (tmp_path / "tool_usage.json").exists()
+    assert (
+        tmp_path
+        / "data"
+        / "plugin_data"
+        / "astrbot_plugin_deepdeep"
+        / "tool_usage.json"
+    ).exists()
     status = await api(plugin, "status")()
     assert status["tool_caps"][0]["used"] == 2 and status["tool_caps"][0]["limit"] == 2
     overview = await api(plugin, "overview")()
