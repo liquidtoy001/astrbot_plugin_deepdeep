@@ -81,7 +81,7 @@ def test_setup_items_for_model_search():
     by_key = {it["key"]: it for it in items}
     assert set(by_key) == {"model:gem", "model:grok", "model:url"}  # 未启用的不提醒
     assert by_key["model:gem"]["status"] == "warn"
-    assert "函数工具会失效" in by_key["model:gem"]["detail"]
+    assert "只支持 Gemini 3" in by_key["model:gem"]["detail"]
     assert "gem" in by_key["model:gem"]["fix"]
     assert by_key["model:grok"]["status"] == "info"
     assert "额外计费" in by_key["model:grok"]["detail"]

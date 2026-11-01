@@ -332,7 +332,7 @@
         "type": "bool",
         "description": "在 WebUI 中显示最近的搜索词",
         "default": true,
-        "hint": "只保存在内存里（最近 100 条），重启清空。关闭后只记录调用结果，不记录搜索词和链接"
+        "hint": "只保存在内存里（最近 100 条），重启清空。关闭后只记录调用结果，不记录搜索词、链接和第一条结果的简述"
     },
     "call_log_enabled": {
         "invisible": true,

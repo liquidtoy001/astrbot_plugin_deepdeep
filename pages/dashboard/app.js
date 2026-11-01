@@ -923,6 +923,7 @@ function renderCallDetail(call) {
         ["HTTP 状态", call.http_status || ""],
         ["耗时", call.duration_ms !== null && call.duration_ms !== undefined ? `${call.duration_ms} ms` : ""],
         ["返回内容长度", call.result_chars !== null && call.result_chars !== undefined ? t("{n} 字", { n: call.result_chars }) : ""],
+        ["第一条结果", call.top_hit],
         ["说明", tr(call.note)],
         ["错误", tr(call.error)],
       ]),
@@ -954,7 +955,7 @@ function renderCallDetail(call) {
         "p",
         { class: "muted small" },
         call.source === "deepseek"
-          ? t("未记录搜索词和结果：设置里关闭了「记录 DeepSeek 的搜索词、链接和返回结果」。")
+          ? t("未记录搜索词和结果：设置里关闭了「记录搜索词、链接、DeepSeek 的返回结果，以及各搜索工具第一条结果的简述」。")
           : t("未记录参数和结果：默认只记录其他工具的名称、耗时和状态。需要时在「设置 → 高级设置」中开启「记录其他工具的完整参数和结果」，之后的调用会保存完整内容。"),
       ),
     );
@@ -963,6 +964,12 @@ function renderCallDetail(call) {
   raw.append(pre(call));
   grid.append(raw);
   return grid;
+}
+
+// 说明列：出错时显示原因，否则显示第一条结果的简述。请求 ID 在展开后的详情里
+function callNoteCell(it) {
+  const text = it.error ? tr(it.error) : it.top_hit || tr(it.note) || "";
+  return el("td", { class: "target" }, el("span", { class: "call-note", title: text }, text));
 }
 
 function renderCalls(items) {
@@ -985,7 +992,7 @@ function renderCalls(items) {
       el("td", {}, el("span", { class: "src" }, sourceLabel(it.source))),
       el("td", {}, el("span", { class: `badge ${cls}` }, t(label) + status)),
       el("td", { class: "num" }, it.duration_ms !== null && it.duration_ms !== undefined ? `${it.duration_ms} ms` : "–"),
-      el("td", { class: "target" }, tr(it.error || it.note) || (it.request_id ? `#${it.request_id}` : "")),
+      callNoteCell(it),
     );
     const detail = el("tr", { class: "row-detail" }, el("td", { colspan: 6 }, el("span", { class: "muted small" }, t("加载中…"))));
     detail.hidden = true;
@@ -1189,9 +1196,22 @@ function callsText(calls) {
   return calls ? t("近 24 小时调用 {n} 次", { n: calls }) : t("近 24 小时没有调用");
 }
 
+// 服务商图标，见 icons.js；没有图标的服务显示名字的首字母
+let logoSeq = 0;
+
+function serviceLogo(item, lamp) {
+  const logo = (window.SERVICE_LOGOS || {})[item.service];
+  const box = el("span", { class: `svc-logo${logo ? "" : " mono"}`, "data-service": item.service || "", "aria-hidden": "true" });
+  // 同一个图标会出现多次，渐变的 id 要各用各的：引用到隐藏页面里的那一个时渐变会失效
+  if (logo) box.innerHTML = logo.replace(/\bid="([^"]+)"/g, `id="$1-${++logoSeq}"`).replace(/url\(#([^)]+)\)/g, `url(#$1-${logoSeq})`);
+  else box.textContent = (tr(item.label) || "?").slice(0, 1).toUpperCase();
+  if (lamp) box.append(el("i", { class: `hdot ${lamp}` }));
+  return box;
+}
+
 function serviceChip(item, { cls = "", names = false } = {}) {
   const title = [t(LAMP_TEXT[item.lamp]), callsText(item.calls), ...item.tools].join("\n");
-  const chip = el("span", { class: `route-chip ${cls}`, title }, el("i", { class: `hdot ${item.lamp}` }), el("span", {}, tr(item.label)));
+  const chip = el("span", { class: `route-chip ${cls}`, title }, serviceLogo(item, item.lamp), el("span", {}, tr(item.label)));
   if (names) chip.append(el("code", {}, item.tools.length > 2 ? t("{list} 等 {n} 个", { list: joinList(item.tools.slice(0, 2)), n: item.tools.length }) : joinList(item.tools)));
   return chip;
 }
@@ -1380,7 +1400,7 @@ function renderModels(models) {
   for (const m of models) {
     const [label, cls] = !m.enabled ? ["未启用", ""] : m.tools_broken ? ["可能冲突", "warn"] : m.is_default ? ["默认在用", "accent"] : ["已启用", ""];
     const notes = [];
-    if (m.tools_broken) notes.push(t("AstrBot 的说明是开启后函数工具会失效，DeepDeep 和其他搜索工具可能都调用不了"));
+    if (m.tools_broken) notes.push(t("按 AstrBot 的说明，原生工具和函数工具同时使用只支持 Gemini 3 及以上模型，其他模型上 DeepDeep 和其他搜索工具可能都调用不了"));
     if (m.extra_cost) notes.push(t("会额外计费"));
     if (m.method !== "gemini_url") notes.push(t("和搜索工具作用重复，可能搜两遍"));
     list.append(
@@ -1427,7 +1447,7 @@ function renderLanes(data) {
         "div",
         { class: "lane-head" },
         el("i", { class: `hdot ${item.lamp}` }),
-        el("div", { class: "lane-plain" }, el("strong", {}, tr(lane.plain)), el("span", { class: "muted" }, " → "), el("strong", {}, tr(item.label))),
+        el("div", { class: "lane-plain" }, el("strong", {}, tr(lane.plain)), el("span", { class: "muted" }, " → "), serviceLogo(item), el("strong", {}, tr(item.label))),
         el("span", { class: `lane-state small lamp-${item.lamp}` }, t(LAMP_TEXT[item.lamp])),
       ),
       el("div", { class: "muted small" }, callsText(item.calls)),
@@ -1638,7 +1658,7 @@ function renderNetwork(data) {
         ...check.sites[region].map((x) => el("span", { class: "muted small site" }, `${tr(x.label)} ${x.ok ? `${x.ms} ms` : tr(x.error)}`)),
       );
     sum.append(
-      el("div", { class: "muted small" }, t("服务器网络（{time} 检测）", { time: new Date(check.checked_at * 1000).toLocaleString() })),
+      el("div", { class: "muted small" }, t(check.proxy ? "服务器网络（{time} 检测）· 请求走 AstrBot 设置的代理" : "服务器网络（{time} 检测）", { time: new Date(check.checked_at * 1000).toLocaleString() })),
       line("domestic", "国内网站"),
       line("foreign", "国外网站"),
     );

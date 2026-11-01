@@ -260,8 +260,10 @@
     可能冲突: "May conflict",
     默认在用: "Default",
     已启用: "Enabled",
-    "AstrBot 的说明是开启后函数工具会失效，DeepDeep 和其他搜索工具可能都调用不了":
-      "AstrBot notes that function tools stop working when this is on, so DeepDeep and other search tools may not be callable",
+    "按 AstrBot 的说明，原生工具和函数工具同时使用只支持 Gemini 3 及以上模型，其他模型上 DeepDeep 和其他搜索工具可能都调用不了":
+      "AstrBot notes that native tools work alongside function tools only on Gemini 3 and later, so on other models DeepDeep and other search tools may not be callable",
+    "服务器网络（{time} 检测）· 请求走 AstrBot 设置的代理": "Server network (checked {time}) · requests use the proxy set in AstrBot",
+    第一条结果: "Top result",
     会额外计费: "costs extra",
     "和搜索工具作用重复，可能搜两遍": "overlaps with search tools and may search twice",
     "想关掉的话：在 AstrBot「提供商」里编辑 {id}，关闭{what}": "To turn it off: edit {id} under AstrBot \"Providers\" and turn off {what}",
@@ -434,7 +436,7 @@
     "{n} 字": "{n} chars",
     调用参数: "Arguments",
     返回结果: "Result",
-    "未记录搜索词和结果：设置里关闭了「记录 DeepSeek 的搜索词、链接和返回结果」。":
+    "未记录搜索词和结果：设置里关闭了「记录搜索词、链接、DeepSeek 的返回结果，以及各搜索工具第一条结果的简述」。":
       "Query and results not recorded: \"Record DeepSeek queries, URLs and results\" is off in Settings.",
     "未记录参数和结果：默认只记录其他工具的名称、耗时和状态。需要时在「设置 → 高级设置」中开启「记录其他工具的完整参数和结果」，之后的调用会保存完整内容。":
       "Arguments and results not recorded: by default only the name, time and status of other tools are kept. Turn on \"Record full arguments and results of other tools\" under Settings → Advanced to keep them for later calls.",
@@ -475,7 +477,7 @@
       "The first tool present in the request becomes the first choice for that type and goes into the guide; other questions still go to DeepDeep first.",
     "每次请求向模型说明搜索工具分工（只列出本次可用的工具）": "Tell the model how search tools divide the work on every request (only tools available in that request)",
     "记录所有工具的调用（保存在插件数据目录，重启不丢）": "Record calls of all tools (stored in the plugin data dir, kept across restarts)",
-    "记录 DeepSeek 的搜索词、链接和返回结果": "Record DeepSeek queries, URLs and results",
+    "记录搜索词、链接、DeepSeek 的返回结果，以及各搜索工具第一条结果的简述": "Record queries, URLs, DeepSeek results and a short top result for each search tool",
     "记录其他工具的完整参数和结果（可能包含聊天内容，默认只记工具名、耗时和状态）":
       "Record full arguments and results of other tools (may include chat content; by default only name, time and status)",
     保留天数: "Keep for (days)",
@@ -518,7 +520,7 @@
     服务器访问不了国外: "Server can't reach sites abroad",
     不联网: "Offline",
     "{list} 等 {n} 个": "{list} and {n} in total",
-    " 服务商在{region}": " provider in {region}",
+    " 服务商在{region}": " provider: {region}",
     直接访问目标网页: "Opens target pages directly",
     "国内 ": "China ",
     "国外 ": "Abroad ",
@@ -600,7 +602,7 @@
     "按次计费，每千次 ¥5（国际站 $0.75）": "Billed per call: ¥5 per 1000 ($0.75 on the international site)",
     "英文和技术资料最好：编程、软件版本、安全漏洞、官方文档": "Best for English and technical material: programming, versions, vulnerabilities, official docs",
     "免费每月 1000 次": "Free: 1000 calls a month",
-    "返回 Google 的结果，国内外网站都覆盖，另有图片、学术、财经搜索": "Google results covering sites in and outside China, plus image, scholar and finance search",
+    "返回 Google 的结果，国内外网站都覆盖，另有新闻、图片、学术、财经搜索": "Google results covering sites in and outside China, plus news, image, scholar and finance search",
     "免费每月 250 次": "Free: 250 calls a month",
     "中文网站为主，接口在国内，国内服务器连接稳定": "Mostly Chinese sites; API in China, stable from servers in China",
     按次计费: "Billed per call",
@@ -742,7 +744,7 @@
     "云端 API": "Cloud API",
     "自建服务（内网）": "Self-hosted (intranet)",
     国内: "China",
-    国外: "abroad",
+    国外: "Outside China",
     "DeepSeek 网页抓取": "DeepSeek page fetch",
     能读: "Readable",
     "由 DeepSeek 的服务器去抓网页，服务器自己打不开的网站也能读": "DeepSeek's servers fetch the page, so sites your server can't open are readable too",
@@ -837,7 +839,7 @@
     [/^到 (\S+) 登录，复制有效的 Key，/, (m) => `Sign in at ${m[1]}, copy a valid key and paste it into the Tavily key under AstrBot "Config → Web search", or "Tavily API key" in the plugin config`],
     [/^等下个月额度重置，或到 (\S+) 升级套餐、换一个 Key。/, (m) => `Wait for the quota to reset, or upgrade your plan or use another key at ${m[1]}. You can set a "Tavily monthly call cap" below your quota under Settings → Advanced so it stops before running out.`],
     [/^对话模型 (.+) · 内置联网搜索$/, (m) => `Chat model ${m[1]} · built-in web search`],
-    [/^开启了(.+?)。AstrBot 的说明是开启后函数工具会失效，DeepDeep 和其他搜索工具可能都调用不了$/, (m, tr) => `${tr(m[1])} is on. AstrBot notes that function tools stop working when it's on, so DeepDeep and other search tools may not be callable`],
+    [/^开启了(.+?)。按 AstrBot 的说明，原生工具和函数工具同时使用只支持 Gemini 3 及以上模型，其他模型上 DeepDeep 和其他搜索工具可能都调用不了$/, (m, tr) => `${tr(m[1])} is on. AstrBot notes that native tools work alongside function tools only on Gemini 3 and later, so on other models DeepDeep and other search tools may not be callable`],
     [/^开启了(.+?)：模型能自己读取网页，和网页读取工具作用重复$/, (m, tr) => `${tr(m[1])} is on: the model can read pages by itself, overlapping with page-reading tools`],
     [/^开启了(.+?)：模型会自己联网搜索，和搜索工具作用重复(，而且会额外计费)?。这部分搜索 DeepDeep 看不到，也不计入费用和调用日志$/, (m, tr) => `${tr(m[1])} is on: the model searches the web by itself, overlapping with search tools${m[2] ? ", at extra cost" : ""}. DeepDeep can't see this search and it isn't counted in spending or the call log`],
     [/^在 AstrBot「提供商」里编辑 (.+?)，关闭「启用原生搜索功能」，联网搜索交给 DeepDeep；/, (m) => `Edit ${m[1]} under AstrBot "Providers" and turn off "Enable native search" so DeepDeep handles web search. To keep Gemini's own search instead, turn off DeepDeep and other search tools so they don't take up context`],

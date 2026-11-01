@@ -20,7 +20,7 @@ from typing import Any
 
 from .log import logger
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MAX_ARGS_CHARS = 4000
 MAX_RESULT_CHARS = 8000
 # 每写入这么多条清理一次过期记录
@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS calls (
     detail TEXT,
     content_recorded INTEGER NOT NULL DEFAULT 0,
     quality TEXT,
-    relevance REAL
+    relevance REAL,
+    top_hit TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts);
 CREATE INDEX IF NOT EXISTS idx_calls_tool ON calls(tool);
@@ -78,12 +79,14 @@ _COLUMNS = (
     "content_recorded",
     "quality",
     "relevance",
+    "top_hit",
 )
 
 # 版本 1 的数据库没有这些列，打开时补上
 _MIGRATIONS = (
     ("quality", "ALTER TABLE calls ADD COLUMN quality TEXT"),
     ("relevance", "ALTER TABLE calls ADD COLUMN relevance REAL"),
+    ("top_hit", "ALTER TABLE calls ADD COLUMN top_hit TEXT"),
 )
 
 # 一次调用在健康统计里算哪一类（running / blocked / cache_hit 不算）
@@ -208,13 +211,14 @@ class CallLog:
         detail: dict | None = None,
         quality: str | None = None,
         relevance: float | None = None,
+        top_hit: str | None = None,
     ) -> None:
         with self._lock:
             self._conn.execute(
                 "UPDATE calls SET status=?, duration_ms=?, result=?, result_chars=?, error=?, "
                 "note=COALESCE(?, note), request_id=COALESCE(?, request_id), "
                 "http_status=COALESCE(?, http_status), detail=COALESCE(?, detail), "
-                "quality=?, relevance=? WHERE id=?",
+                "quality=?, relevance=?, top_hit=? WHERE id=?",
                 (
                     status,
                     duration_ms,
@@ -229,6 +233,7 @@ class CallLog:
                     _dumps(detail),
                     quality,
                     relevance,
+                    top_hit,
                     row_id,
                 ),
             )
@@ -303,9 +308,9 @@ class CallLog:
             clauses.append(
                 "(tool LIKE ? ESCAPE '\\' OR args LIKE ? ESCAPE '\\' OR result LIKE ? ESCAPE '\\' "
                 "OR error LIKE ? ESCAPE '\\' OR note LIKE ? ESCAPE '\\' OR request_id LIKE ? ESCAPE '\\' "
-                "OR detail LIKE ? ESCAPE '\\')"
+                "OR detail LIKE ? ESCAPE '\\' OR top_hit LIKE ? ESCAPE '\\')"
             )
-            params.extend([like] * 7)
+            params.extend([like] * 8)
         return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
 
     def query(
@@ -320,7 +325,7 @@ class CallLog:
             ).fetchone()[0]
             rows = self._conn.execute(
                 "SELECT id, ts, duration_ms, tool, source, session, status, request_id, "
-                "http_status, result_chars, error, note, content_recorded, "
+                "http_status, result_chars, error, note, top_hit, content_recorded, "
                 "args IS NOT NULL AS has_args, detail IS NOT NULL AS has_detail "
                 f"FROM calls{where} ORDER BY id DESC LIMIT ? OFFSET ?",
                 [*params, limit, max(0, offset)],

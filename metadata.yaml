@@ -1,8 +1,8 @@
 name: astrbot_plugin_deepdeep
-display_name: DeepDeep
-desc: 帮机器人选对搜索工具，一家出问题就换另一家，并估算和限制所有付费搜索的花费。不替换你已有的搜索工具，可以和 AstrBot 内置网页搜索、各类搜索插件一起用。面板里能看状态灯、花费和调用日志。
-short_desc: 搜索管理器：选对搜索工具，出错自动换，管住花费
-version: v1.1.0
+display_name: DeepDeep 搜索管理器
+desc: 统一管理 AstrBot 内置搜索和社区搜索插件：自动选对工具，出错就换一家，付费搜索到上限自动停。
+short_desc: AstrBot 搜索管理器：兼容内置搜索和社区插件，选对工具，出错就换，管住花费
+version: v1.1.1
 author: Turino
 repo: https://github.com/liquidtoy001/astrbot_plugin_deepdeep
 astrbot_version: ">=4.26.0,<5" # 需要插件页面（pages）和 astrbot.api.web，二者自 4.26.0 起提供

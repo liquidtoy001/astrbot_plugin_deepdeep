@@ -282,8 +282,8 @@ def check_model_search(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 {
                     **item,
                     "status": "warn",
-                    "detail": f"开启了{m.get('label')}。AstrBot 的说明是开启后函数工具会失效，"
-                    "DeepDeep 和其他搜索工具可能都调用不了",
+                    "detail": f"开启了{m.get('label')}。按 AstrBot 的说明，原生工具和函数工具同时使用只支持 Gemini 3 及以上模型，"
+                    "其他模型上 DeepDeep 和其他搜索工具可能都调用不了",
                     "fix": f"{where}，关闭「启用原生搜索功能」，联网搜索交给 DeepDeep；"
                     "想保留 Gemini 自己搜索的话，可以关掉 DeepDeep 和其他搜索工具，免得白占上下文",
                 }

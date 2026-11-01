@@ -2,7 +2,7 @@
 
 模型内置的搜索发生在模型调用内部，不经过工具，DeepDeep 的路由、调用日志和费用统计都看不到它。
 这里只读提供商配置，不发请求、不改配置。对照 AstrBot 4.29（2026-10）的提供商配置：
-- Gemini：gm_native_search（Google 搜索）、gm_url_context（读取链接）。AstrBot 的说明是开启原生搜索后函数工具会失效
+- Gemini：gm_native_search（Google 搜索）、gm_url_context（读取链接）。AstrBot 的说明是原生工具和函数工具同时使用只支持 Gemini 3 及以上模型
 - xAI：xai_native_search（Live Search，按信息源计费）
 - 其余厂商靠「自定义请求体」（custom_extra_body）开启，比如通义千问的 enable_search
 - 有些模型本身就带搜索（OpenAI 的 *-search-preview、Perplexity 的 sonar、OpenRouter 的 :online 后缀）
@@ -31,7 +31,7 @@ class ModelSearch:
     provider_type: str
     method: str  # gemini / xai / extra_body / model
     label: str
-    # tools_broken：开启后函数工具可能失效；extra_cost：额外计费
+    # tools_broken：开启后函数工具可能用不了；extra_cost：额外计费
     tools_broken: bool = False
     extra_cost: bool = False
     url_context: bool = False

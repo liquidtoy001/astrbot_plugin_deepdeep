@@ -17,6 +17,7 @@ from typing import Any
 from .activity import ActivityLog
 from .calllog import CallLog
 from .health import classify, extract_query
+from .tophit import extract as extract_top_hit
 
 REQUEST_ID_RE = re.compile(r"#([0-9a-f]{6})\]")
 
@@ -74,12 +75,14 @@ class ToolCallRecorder:
         *,
         own_tools: tuple[str, ...],
         plugin_resolver: Callable[[str], str | None] = lambda _m: None,
+        is_search: Callable[[str], bool] = lambda _name: False,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.log = log
         self.activity = activity
         self.own_tools = own_tools
         self.plugin_resolver = plugin_resolver
+        self.is_search = is_search
         self.enabled = True
         # 其他工具的参数和结果默认不记录，只记工具名、耗时和状态
         self.record_other_content = False
@@ -140,6 +143,13 @@ class ToolCallRecorder:
             quality, score = classify(query, text)
             fields["quality"] = quality
             fields["relevance"] = score
+        # 第一条结果的简述跟随“记录搜索词”开关，只记搜索工具，不记其他工具的返回内容
+        if (
+            fields["status"] in ("ok", "cache_hit")
+            and self.activity.record_targets
+            and (name in self.own_tools or self.is_search(name))
+        ):
+            fields["top_hit"] = extract_top_hit(text)
         await asyncio.to_thread(
             self.log.finish,
             row_id,

@@ -343,7 +343,7 @@ PROVIDERS: tuple[Provider, ...] = (
                 "serpapi",
                 "SerpApi（Google 结果）",
                 "builtin",
-                "返回 Google 的结果，国内外网站都覆盖，另有图片、学术、财经搜索",
+                "返回 Google 的结果，国内外网站都覆盖，另有新闻、图片、学术、财经搜索",
                 "免费每月 250 次",
                 ("*serpapi*",),
                 builtin=Builtin(
@@ -352,6 +352,7 @@ PROVIDERS: tuple[Provider, ...] = (
                     "websearch_serpapi_key",
                     (
                         "web_search_serpapi",
+                        "news_search_serpapi",
                         "image_search_serpapi",
                         "finance_search_serpapi",
                         "scholar_search_serpapi",
@@ -359,8 +360,7 @@ PROVIDERS: tuple[Provider, ...] = (
                 ),
             ),
         ),
-        # AstrBot 主分支新增的新闻搜索（v4.29.3 还没有，所以不写进 Builtin.tools，免得面板
-        # 预览列出不存在的工具）。算可替代的通用搜索，不算专用：见 tests/test_providers.py
+        # 新闻搜索：算可替代的通用搜索，不算专用，见 tests/test_providers.py
         known_tools=("news_search_serpapi",),
         networks=(
             Network(
@@ -1108,6 +1108,8 @@ BUILTINS: tuple[Builtin, ...] = _pinned(
     lambda b: b.id,
 )
 # AstrBot 设置页的网页搜索提供商 -> 会加入请求的内置工具名
+# 不是所有支持的 AstrBot 版本都有的工具：工具名 -> 从哪个版本开始有
+BUILTIN_TOOLS_SINCE = {"news_search_serpapi": (4, 29, 4)}
 BUILTIN_PROVIDER_TOOLS = {b.id: list(b.tools) for b in BUILTINS}
 # 内置网页搜索工具名，用于 WebUI 预览（它们在每次请求时才加入工具集）
 BUILTIN_WEB_SEARCH_TOOLS = [t for b in BUILTINS for t in b.tools]

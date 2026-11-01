@@ -188,7 +188,8 @@ class DeepSeekToolsClient:
 
     def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            # trust_env：走 AstrBot「网络代理」设置的代理，和 AstrBot 内置搜索一样
+            self._session = aiohttp.ClientSession(trust_env=True)
         return self._session
 
     async def search(

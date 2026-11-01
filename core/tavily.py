@@ -118,7 +118,7 @@ class TavilyClient:
                 self._session_factory()
                 if self._session_factory
                 else aiohttp.ClientSession(
-                    timeout=aiohttp.ClientTimeout(total=self.timeout)
+                    timeout=aiohttp.ClientTimeout(total=self.timeout), trust_env=True
                 )
             )
         return self._session

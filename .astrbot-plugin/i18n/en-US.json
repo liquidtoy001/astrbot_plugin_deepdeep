@@ -1,8 +1,8 @@
 {
   "metadata": {
-    "display_name": "DeepDeep",
-    "short_desc": "Search manager: picks the right search tool, switches on failure, controls spending",
-    "desc": "Helps your bot pick the right search tool, switches when one fails, and estimates and caps spending across paid search services. It works alongside AstrBot's built-in web search and other search plugins. The dashboard shows status lights, spending and a call log."
+    "display_name": "DeepDeep Search Manager",
+    "short_desc": "Search manager for AstrBot: works with built-in search and community plugins, picks the right tool, switches on failure, controls spending",
+    "desc": "Manage AstrBot's built-in web search and community search plugins in one place: picks the right tool, switches when one fails, and stops paid search at your spending cap."
   },
   "config": {
     "api_key": {

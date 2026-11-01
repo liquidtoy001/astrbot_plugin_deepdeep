@@ -83,7 +83,12 @@ def select_results(
         sel = Selection(shown, [], low_quality, padded_from, newest_date)
     if recent:
         shown_newest = max((r.date for r in sel.shown if r.date), default="")
-        later = [r for r in results if r not in sel.shown and r.date > shown_newest]
+        # 有些结果不带日期
+        later = [
+            r
+            for r in results
+            if r.date and r not in sel.shown and r.date > shown_newest
+        ]
         later.sort(key=lambda r: r.date, reverse=True)
         sel.newest = later[:NEWEST_EXTRA]
     return sel

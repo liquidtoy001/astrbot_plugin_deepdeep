@@ -4,7 +4,7 @@ from conftest import make_result
 
 from core.cache import TTLCache
 from core.client import DeepSeekToolsClient, FetchResult, SearchResult
-from core.formatter import format_fetch_result, format_search_results
+from core.formatter import format_fetch_result, format_search_results, select_results
 from core.service import SearchService, Settings, coerce_count
 from core.stats import UsageStats
 
@@ -260,3 +260,14 @@ def test_stats_survive_corrupt_file(tmp_path):
     stats = UsageStats(path)
     stats.record("search", "billable")
     assert stats.day()["search"]["billable"] == 1
+
+
+def test_recent_query_with_undated_results_does_not_crash():
+    results = [
+        SearchResult(title="a", url="u1", date="2026-10-01", rerank_score=0.9),
+        SearchResult(title="b", url="u2", date=None, rerank_score=0.8),
+        SearchResult(title="c", url="u3", date="2026-10-30", rerank_score=0.7),
+    ]
+    sel = select_results("最新的榜单", results, 1, 0.5)
+    assert [r.title for r in sel.shown] == ["a"]
+    assert [r.title for r in sel.newest] == ["c"]

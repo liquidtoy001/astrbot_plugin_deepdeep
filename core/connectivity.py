@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 from fnmatch import fnmatchcase
@@ -212,7 +213,8 @@ async def run_check(
     groups: list[dict[str, Any]], searxng_url: str | None
 ) -> dict[str, Any]:
     timeout = aiohttp.ClientTimeout(total=PROBE_TIMEOUT)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
+    # 和搜索请求走同一条路（跟随 AstrBot 的代理）；SearXNG 是自建的，直接连
+    async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
         site_tasks = {
             (region, label): _probe(session, url)
             for region, sites in PROBE_SITES.items()
@@ -220,10 +222,12 @@ async def run_check(
         }
         endpoints = sorted({g["endpoint"] for g in groups if g.get("endpoint")})
         ep_tasks = {ep: _probe(session, ep) for ep in endpoints}
-        searx_task = check_searxng(session, searxng_url) if searxng_url else None
         site_res = await asyncio.gather(*site_tasks.values())
         ep_res = await asyncio.gather(*ep_tasks.values())
-        searx = await searx_task if searx_task else None
+    searx = None
+    if searxng_url:
+        async with aiohttp.ClientSession(timeout=timeout) as direct:
+            searx = await check_searxng(direct, searxng_url)
     sites: dict[str, list[dict[str, Any]]] = {"domestic": [], "foreign": []}
     for (region, label), res in zip(site_tasks, site_res, strict=True):
         sites[region].append({"label": label, **res})
@@ -235,6 +239,7 @@ async def run_check(
         "sites": sites,
         "server_domestic_ok": summary["domestic"] > 0,
         "server_foreign_ok": summary["foreign"] > 0,
+        "proxy": bool(os.environ.get("https_proxy") or os.environ.get("http_proxy")),
         "endpoints": dict(zip(ep_tasks, ep_res, strict=True)),
         "searxng": searx,
     }

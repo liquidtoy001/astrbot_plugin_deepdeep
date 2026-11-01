@@ -7,7 +7,17 @@ from typing import Any
 from astrbot.api import logger
 
 from . import model_search
-from .providers import BUILTIN_PROVIDER_TOOLS
+from .providers import BUILTIN_PROVIDER_TOOLS, BUILTIN_TOOLS_SINCE
+
+
+def _astrbot_version() -> tuple[int, ...]:
+    """读不到版本时按最老的算：面板不列可能不存在的工具。"""
+    try:
+        from astrbot.core.config.default import VERSION
+
+        return tuple(int(x) for x in str(VERSION).split("-")[0].split("."))
+    except Exception:  # noqa: BLE001
+        return (0,)
 
 
 class AstrBotView:
@@ -74,9 +84,14 @@ class AstrBotView:
         try:
             ps = self.config().get("provider_settings", {})
             if ps.get("web_search"):
-                names += BUILTIN_PROVIDER_TOOLS.get(
-                    ps.get("websearch_provider", ""), []
-                )
+                version = _astrbot_version()
+                names += [
+                    t
+                    for t in BUILTIN_PROVIDER_TOOLS.get(
+                        ps.get("websearch_provider", ""), []
+                    )
+                    if version >= BUILTIN_TOOLS_SINCE.get(t, (0,))
+                ]
         except Exception as exc:  # noqa: BLE001
             logger.debug(f"[deepdeep] 读取网页搜索配置失败: {exc}")
         return names

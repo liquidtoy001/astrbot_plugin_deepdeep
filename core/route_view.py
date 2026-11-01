@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import Any
@@ -143,6 +144,16 @@ def arrange(lanes: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str
     return main + special, missing
 
 
+# 同一家的几种接入方式：tavily_builtin、exa_plugin、baidu_ai_search
+SERVICE_SUFFIX_RE = re.compile(r"_(?:builtin|plugin|ai_search)$")
+
+
+def _service_key(tool: str) -> str:
+    """面板用它找服务商图标。"""
+    entry = catalog.entry_for(tool)
+    return SERVICE_SUFFIX_RE.sub("", entry.key) if entry else ""
+
+
 class ToolStatus:
     """每个服务的状态灯。出现在这里的工具都已经提供给模型了，所以没问题就是绿的；
     近 24 小时没人调用不算问题，调用次数另外显示。"""
@@ -177,6 +188,7 @@ class ToolStatus:
         return [
             {
                 "label": label,
+                "service": _service_key(names[0]),
                 "tools": names,
                 "lamp": self.lamp(names),
                 "calls": self.calls(names),

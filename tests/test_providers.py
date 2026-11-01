@@ -3,15 +3,18 @@
 import ast
 import json
 import re
+import sys
+import types
 from pathlib import Path
 
+import pytest
 from test_plugin import (
     FakeConfig,
     FakeContext,
     plugin_module,  # noqa: F401 - pytest 夹具
 )
 
-from core import catalog, connectivity, preference, providers
+from core import astrbot_view, catalog, connectivity, preference, providers
 from core.router import (
     DEFAULT_FALLBACK_PATTERNS,
     DEFAULT_LANE_RULES,
@@ -157,8 +160,9 @@ def test_serpapi_tools_stay_in_their_roles():
         "scholar_search_serpapi",
     ):
         assert router.specialty(tool) is not None, tool
-    # 主分支才有的工具，不写进选中 SerpApi 时会加入请求的工具
-    assert "news_search_serpapi" not in providers.BUILTIN_WEB_SEARCH_TOOLS
+    # 4.29.4 才有的工具：面板要按版本判断，老版本不列
+    assert "news_search_serpapi" in providers.BUILTIN_PROVIDER_TOOLS["serpapi"]
+    assert providers.BUILTIN_TOOLS_SINCE["news_search_serpapi"] == (4, 29, 4)
 
 
 def test_schema_defaults_match_the_table():
@@ -211,3 +215,25 @@ def test_web_api_only_uses_the_declared_interface(plugin_module):  # noqa: F811
     plugin = plugin_module.DeepSeekSearchPlugin(FakeContext(), FakeConfig({}))
     for name in members:
         assert hasattr(plugin, name), name
+
+
+@pytest.mark.parametrize(
+    ("version", "listed"),
+    [("4.29.3", False), ("4.29.4", True), ("4.30.0-beta.1", True)],
+)
+def test_serpapi_news_listed_only_on_versions_that_have_it(
+    monkeypatch, version, listed
+):
+    default = types.ModuleType("astrbot.core.config.default")
+    default.VERSION = version
+    monkeypatch.setitem(sys.modules, "astrbot.core.config.default", default)
+    mgr = types.SimpleNamespace(func_list=[])
+    config = {
+        "provider_settings": {"web_search": True, "websearch_provider": "serpapi"}
+    }
+    context = types.SimpleNamespace(
+        get_llm_tool_manager=lambda: mgr, get_config=lambda *a, **k: config
+    )
+    names = astrbot_view.AstrBotView(context).current_tool_names()
+    assert "web_search_serpapi" in names
+    assert ("news_search_serpapi" in names) is listed
