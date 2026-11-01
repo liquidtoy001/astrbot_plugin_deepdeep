@@ -139,6 +139,20 @@
 </details>
 
 <details>
+<summary>调用日志页截图</summary>
+
+<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/calllog.png" alt="调用日志页：按时间、来源、工具和结果筛选每次工具调用" />
+
+</details>
+
+<details>
+<summary>设置页截图</summary>
+
+<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/settings.png" alt="设置页：每月花费上限、偏向和搜索服务" />
+
+</details>
+
+<details>
 <summary>工具与诊断页截图</summary>
 
 <img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/tools.png" alt="工具与诊断页：诊断信息、网络连通性和工具路由预览" />

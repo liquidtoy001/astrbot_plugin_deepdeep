@@ -139,9 +139,23 @@ For everyday use you only need Overview and Settings. Settings save automaticall
 </details>
 
 <details>
-<summary>Tools &amp; diagnostics page screenshot (Chinese interface)</summary>
+<summary>Call log page screenshot</summary>
 
-<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/tools.png" alt="Tools and diagnostics page: diagnostics, network connectivity and routing preview" />
+<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/calllog_en.png" alt="Call log page: filter every tool call by time, source, tool and result" />
+
+</details>
+
+<details>
+<summary>Settings page screenshot</summary>
+
+<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/settings_en.png" alt="Settings page: monthly spending cap, preference and search services" />
+
+</details>
+
+<details>
+<summary>Tools &amp; diagnostics page screenshot</summary>
+
+<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/tools_en.png" alt="Tools and diagnostics page: diagnostics, network connectivity and routing preview" />
 
 </details>
 
