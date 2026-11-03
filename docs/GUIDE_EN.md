@@ -29,6 +29,8 @@ DeepDeep **manages** your search tools:
 - **Cost control**: CNY or USD billing, daily and monthly caps; hitting a cap never silently switches to another tool billed by the same DeepSeek account. Tavily and other paid search tools can get monthly call caps and stop for the rest of the month once reached
 - **Usage stats**: calls, success rate, failures and average latency for every search tool
 - **Call log**: every call of **every tool** is stored persistently, filterable and exportable
+- **KB monitor**: whether retrieval finds things, what embedding and rerank cost, whether results help; knowledge bases can be switched on and off here
+- **MCP monitor**: connection status, calls and failure rate per server, and the tokens tool descriptions take up; servers and single tools can be switched on and off here
 - **Dashboard**: view and change all of the above in the AstrBot WebUI; changes apply immediately. Available in Chinese and English
 - **No extra dependencies**, only libraries bundled with AstrBot
 
@@ -73,21 +75,21 @@ Using the author's real tool list (79 tools, including SearXNG, Tavily, arXiv an
 |---|---|---|---|---|
 | Without DeepDeep | 92 / 117 | 7 | 6 | 12 |
 | DeepDeep without guide | 85 / 117 | 12 | 8 | 12 |
-| **Guide only (default)** | **95 / 117** | 6 | 7 | 9 |
-| DeepSeek first (hide overlapping) | 94 / 117 | 5 | 8 | 10 |
+| **Tell the model to switch (default, formerly "Guide only")** | **95 / 117** | 6 | 7 | 9 |
+| Switch automatically (hides overlapping tools, formerly "DeepSeek first") | 94 / 117 | 5 | 8 | 10 |
 
 - Adding a search tool without a guide made choices clearly worse; the guide recovers that and does slightly better than no plugin
 - Gains are in specialist cases: Bilibili questions went to video search 3 of 3 times (0 of 3 without a guide), song requests used music search more often
 - The 4 no-search questions never triggered a tool call in any setup (12 of 12): the guide does not cause unnecessary searches
 - Some "wrong" picks are reasonable: for "latest Kubernetes version" and "recently merged AstrBot PRs" the model used the GitHub MCP's `get_latest_release` and `list_pull_requests`
-- Both modes choose about equally well; guide only never changes the tool list and keeps prompt caching intact, so it is the default
+- Both modes choose about equally well; "Tell the model to switch" never changes the tool list and keeps prompt caching intact, so it is the default
 - Limits: short persona without long history or a full system prompt, 3 runs per question, deepseek-flash only. All evaluation runs cost about ¥1.2
 
 ## Effect on prompt caching and tokens
 
 - **The guide** sits at the end of the system prompt, usually 150–250 tokens with at most 3 tools per line. It is identical while the tool set is unchanged and costs almost nothing once cached (deepseek-flash cache hits are ¥0.02–0.04 per million tokens)
-- **Guide only (default)**: the tool list and guide never change; when DeepSeek is unavailable, DeepDeep's tool result tells the model what to use instead, so **the cache is never invalidated** by DeepDeep. All search tool definitions are sent (about 1,000 more tokens with SearXNG plus Tavily), but they are cached and cost almost nothing
-- **DeepSeek first**: hides overlapping tools for shorter, more focused requests, but every switch between available and unavailable, and every mid-conversation restore, changes the tool list and **invalidates the cache once** (misses cost about 50× hits on deepseek-flash). Better for short contexts
+- **Tell the model to switch (default)**: the tool list and guide never change; when DeepSeek is unavailable, DeepDeep's tool result tells the model what to use instead, so **the cache is never invalidated** by DeepDeep. All search tool definitions are sent (about 1,000 more tokens with SearXNG plus Tavily), but they are cached and cost almost nothing
+- **Switch automatically**: hides overlapping tools for shorter, more focused requests, but every switch between available and unavailable, and every mid-conversation restore, changes the tool list and **invalidates the cache once** (misses cost about 50× hits on deepseek-flash). Better for short contexts
 - In both modes, changing routing or specialist settings, upgrading the plugin, or adding or removing other plugins or MCP tools invalidates the cache once
 - **Measured** on the author's deployment (about 800k tokens of context): 99.8–100% cache hits across consecutive turns; misses only after plugin upgrades. With long contexts one miss costs about "context length × miss price", e.g. ¥0.8–1.6 for 800k tokens
 
@@ -97,15 +99,15 @@ If you would rather not use DeepDeep's own DeepSeek search (for example because 
 
 | Mode | DeepSeek available | DeepSeek down | Over spending cap |
 |---|---|---|---|
-| **Guide only** (default) | All tools visible; the guide says use DeepDeep first and switch when results are empty or poor | Tools unchanged; calling DeepDeep returns "use X instead" | Same, suggestions **exclude** DeepSeek-billed tools |
-| DeepSeek first | Only DeepDeep for general search, overlapping tools hidden | Other general search tools come back | Other general tools come back, **except** DeepSeek-billed ones |
+| **Tell the model to switch** (default) | All tools visible; the guide says use DeepDeep first and switch when results are empty or poor | Tools unchanged; calling DeepDeep returns "use X instead" | Same, suggestions **exclude** DeepSeek-billed tools |
+| Switch automatically | Only DeepDeep for general search, overlapping tools hidden | Other general search tools come back | Other general tools come back, **except** DeepSeek-billed ones |
 | DeepSeek only | DeepDeep only | Still DeepDeep only; the model is told search is unavailable | Same |
-| Pause DeepSeek | Other search tools only | Same | Same |
-| Don't interfere | All search tools | Same | Same |
+
+To stop using DeepSeek entirely, turn off the switch above (the old "Pause DeepSeek" and "Don't interfere" modes are migrated on upgrade).
 
 "Down" means no API key, an open circuit breaker or a failed call. **Empty or uniformly low-relevance results** are not failures, but the model is still advised to try another general search tool; a failed page fetch only suggests other fetch tools. Specialists are kept in every mode.
 
-Note: in guide-only mode every tool is visible, so once the spending cap is reached DeepDeep can only **advise** the model not to use other DeepSeek-billed tools such as AstrBot's built-in DeepSeek search; it cannot block them. For strict control, use DeepSeek-first mode or don't enable the built-in DeepSeek search at the same time.
+Note: in "Tell the model to switch" mode every tool is visible, so once the spending cap is reached DeepDeep can only **advise** the model not to use other DeepSeek-billed tools such as AstrBot's built-in DeepSeek search; it cannot block them. For strict control, use "Switch automatically" or don't enable the built-in DeepSeek search at the same time.
 
 To avoid conflicts with AstrBot and other plugins:
 
@@ -116,7 +118,7 @@ To avoid conflicts with AstrBot and other plugins:
 
 ## Compatibility
 
-Compiled against the AstrBot plugin market as of 2026-10. These tools are recognized as general search fallbacks: listed as alternatives in the guide in guide-only mode, hidden while DeepSeek is available and restored when needed in DeepSeek-first mode:
+Compiled against the AstrBot plugin market as of 2026-10. These tools are recognized as general search fallbacks: listed as alternatives in the guide in "Tell the model to switch" mode, hidden while DeepSeek is available and restored when needed in "Switch automatically" mode:
 
 | Source | Search tools | Fetch tools |
 |---|---|---|
@@ -132,37 +134,41 @@ Compiled against the AstrBot plugin market as of 2026-10. These tools are recogn
 
 ¹ Also billed by DeepSeek: never suggested or restored once DeepDeep's spending cap is reached.
 
-Tool not listed? Check the dashboard's "Tool routing preview". If it isn't recognized, add it to the general search patterns or the specialist rules, and feel free to open an issue. DeepDeep's tool names (`deepdeep_web_search`, `deepdeep_web_fetch`) and command (`/deepdeep`) don't clash with any of the plugins above.
+Tool not listed? Check "Search services" in Settings. If it isn't recognized, add it to the general search patterns or the specialist rules, and feel free to open an issue. DeepDeep's tool names (`deepdeep_deepseek_search`, `deepdeep_deepseek_fetch`) and command (`/deepdeep`) don't clash with any of the plugins above.
 
 ## DeepDeep's own search tools
 
 | Tool | Purpose |
 |---|---|
-| `deepdeep_web_search(query, count)` | Web search through the [DeepSeek Search API](https://api-docs.deepseek.com/guides/search). Each result has a long summary, publish date, relevance and authority. Supports `site:`, `-site:`, `"exact phrase"`, `lang:zh,en`, `after:2026-01-01`, `before:2026-06` |
-| `deepdeep_web_fetch(url)` | Reads a full page as Markdown through the DeepSeek Fetch API |
-| `deepdeep_tavily_search(query, count)` | Tavily search for technical questions and as DeepSeek's first fallback. Reuses the Tavily key from AstrBot's web search settings by default (even when the built-in provider is something else); not offered without a key or when the built-in provider already is Tavily. An optional monthly call cap (Advanced settings) stops offering it for the rest of the month once reached |
+| `deepdeep_deepseek_search(query, count)` | Web search through the [DeepSeek Search API](https://api-docs.deepseek.com/guides/search). Each result has a long summary, publish date, relevance and authority. Supports `site:`, `-site:`, `"exact phrase"`, `lang:zh,en`, `after:2026-01-01`, `before:2026-06` |
+| `deepdeep_deepseek_fetch(url)` | Reads a full page as Markdown through the DeepSeek Fetch API |
+| `deepdeep_tavily_search(query, count)` | Tavily search for technical questions and as DeepSeek's first fallback. Reuses the Tavily key from AstrBot's web search settings by default (even when the built-in provider is something else); not offered without a key or when the built-in provider already is Tavily. An optional monthly call cap (Settings, "Spending and limits") stops offering it for the rest of the month once reached |
 
 The first line of each result is a status line with a 6-character request ID that also appears in the logs and dashboard, e.g. `[DeepSeek 搜索 #a1b2c3] 成功 · 6 条结果 · 456 ms`. DeepDeep asks DeepSeek for at least 10 results per call (billing is per request, not per result) and shows the model about `count` of them. If fewer than 3 results pass the relevance threshold, the next ones are added and marked as less relevant. For "latest" questions or queries with `after:`/`before:`, results are not filtered by relevance (fresh content tends to score low), the model is reminded that results are sorted by relevance, not date, the "newest result" date covers all returned results, and up to 2 newer but lower-ranked results are appended.
 
 ## Dashboard
 
-Open the plugin in the AstrBot WebUI and choose "DeepDeep Dashboard". It has five pages; switching doesn't reload anything, and each page loads its data the first time it's opened. The language switch in the top right offers Follow AstrBot / 中文 / English:
+Open the plugin in the AstrBot WebUI and choose "DeepDeep Dashboard". It has seven pages; switching doesn't reload anything, and each page loads its data the first time it's opened. The language switch in the top right offers Follow AstrBot / 中文 / English:
 
 - **Overview**
-  - Status: healthy or degraded and why, connection test, circuit reset
+  - Status: whether search, knowledge bases and MCP work and why, circuit reset
   - Setup check: DeepDeep's DeepSeek/Tavily keys (including invalid keys and used-up quota), the key of AstrBot's selected built-in web search provider, other search plugins' API keys and SearXNG URL, and chat models' built-in web search, with where to fix each (only checks whether a value is set, never reads it)
   - Acting on warnings: each warning can be ignored, and plugin/MCP tools can be stopped with one click (uses AstrBot's own tool switch, confirm twice); handled items move to a folded "Handled" section where they can be re-enabled or un-ignored
-  - Spending: today and this month against the caps, in the billing currency plus the converted other currency; searches and fetches today
+  - This month's spending: a budget ring split by service, with the share used and a month-end estimate
+  - Search trend: searches and fetches over 14 days
   - Main search tools: first choice and fallbacks for general search and page reading, plus each specialist tool's job, with health badges
   - Chat models' built-in web search: which chat models search the web by themselves, and how to turn it off
-- **Usage**: DeepSeek calls over 30 days; monthly call caps (Tavily and other search tools); calls, success rate, failures, blocked calls and average latency per search tool over 24 hours, 7 days or 30 days
-- **Call log**: filter by time, source, tool, outcome, keyword or request ID; paging, details, JSON Lines export, clear
+- **Search usage**: searches over 30 days; estimated spending per paid service this month; monthly call caps as progress bars; calls, success rate, failures, blocked calls and average latency per search tool over 24 hours, 7 days or 30 days
+- **KB monitor**: whether retrieval finds things, embedding and rerank cost, which knowledge bases results come from, suggestions; switch knowledge bases, enter model prices, trim retrieved results
+- **MCP monitor**: connection status, calls, failure rate and tool description tokens per server; switch servers and single tools
+- **Call log**: filter by category (web search, knowledge base, MCP, other plugins, built-in), time, source, tool, outcome, keyword or request ID; paging, details, JSON Lines export, clear
 - **Settings**: changes save automatically and apply immediately
-  - Basics: DeepSeek/Tavily switches, billing currency, monthly cap
+  - Spending and limits: monthly cap across paid search services; expand for currency, exchange rate, DeepSeek daily cap and a monthly call cap per service
   - Search preference: pick a preset (recommended, save money, Chinese sources first), then reorder or skip tools for general questions, technical questions and reading pages
-  - Available search tools: every search tool DeepDeep knows, what each is good at, what it costs, its status, and where to set it up
-  - Advanced: routing mode, daily cap, exchange rate, circuit breaker, monthly call caps for Tavily and other search tools, patterns, specialist rules, call log options
-- **Tools & diagnostics**: tool routing preview (whether each tool is visible when DeepSeek is healthy, down or over budget), network connectivity (see below), diagnostics to attach to bug reports (no API keys)
+  - What happens when something fails: choose what to do when DeepSeek fails (tell the model to switch, switch automatically, DeepSeek only), set the circuit breaker, and preview the effect
+  - Search services: every search tool DeepDeep knows, what each is good at, what it costs, its status, and where to set it up; keys and tests are on each card
+  - Advanced: grouped into "All of DeepDeep's own search tools" and "DeepSeek only", with patterns, specialist rules, search results and call log options
+- **Diagnostics**: diagnostic information to give an AI or attach to bug reports (no API keys, user IDs or retrieved content); network connectivity (see below)
 
 ## Search tool health
 
@@ -172,7 +178,7 @@ This is **advisory only**: it shows on the dashboard and in `/deepdeep stats` an
 
 ## Network
 
-Cloud APIs (DeepSeek, SerpApi, Tavily, ...) search on the provider's servers, so your server only needs to reach the API. Self-hosted services such as `http://searxng:8080` send requests from your server, so engines your server cannot reach, or that block its IP, return nothing. "Check connectivity" opens a few Chinese and international sites and every API endpoint from the server and runs one real SearXNG query (its URL is read from the other plugin's config), listing working and blocked engines. No billed API is called.
+Cloud APIs (DeepSeek, SerpApi, Tavily, ...) search on the provider's servers, so your server only needs to reach the API. Self-hosted services such as `http://searxng:8080` send requests from your server, so engines your server cannot reach, or that block its IP, return nothing. Besides search backends, the list covers MCP servers, knowledge base embedding and rerank services, and search tools whose backend isn't recognized. "Check connectivity" opens a few Chinese and international sites and every API endpoint from the server and runs one real SearXNG query (its URL is read from the other plugin's config), listing working and blocked engines, and retries once if every engine times out. No billed API is called.
 
 ## Call log and stats
 
@@ -181,6 +187,10 @@ DeepDeep records calls of **all tools** through AstrBot's tool hooks (`on_using_
 - DeepDeep's own calls: arguments, results and full details (request attempts, raw errors, relevance and dates, fallback). Arguments and results can be turned off
 - Other tools: by default only name, source, session, duration and outcome. Arguments and results are stored only after enabling "Record full args and results of other tools"
 - Calls that raise inside AstrBot are marked failed when the conversation ends; calls still running at restart are marked interrupted
+- Knowledge base retrievals are recorded with scores, sources and how many embedding and rerank calls they used: AstrBot's tool calls, automatic injection, direct retrieval by plugins and WebUI retrieval tests, in every session. Community knowledge base plugins (recognized by name and description, including memory plugins) are recorded when they add content to the request before sending: which plugin, how many tokens, duration, and embedding and rerank use through AstrBot's providers. Content and queries follow "Record full args and results of other tools" and aren't kept by default. Tool-based ones only give name, duration, status and result text. None of them report scores or sources, and APIs a plugin calls directly and unrecognized plugins can't be seen
+- Scores and API call counts are always recorded. Sources follow "Record queries, URLs, DeepSeek results and a short top result for each search tool", and snippets and queries follow "Record full args and results of other tools"
+- Knowledge base records you marked useful or not useful survive retention cleanup until you clear the log
+- Embedding and rerank prices come from models.dev at most once a day. Only the public price list is downloaded and none of your data is sent
 - DeepDeep's calls are also written to AstrBot's official Trace
 
 ## Admin commands

@@ -194,13 +194,13 @@ def names(plugin):
 
 def make(module, **config):
     return module.DeepSeekSearchPlugin(
-        FakeContext(tool_names=["deepdeep_web_search"]), FakeConfig(config)
+        FakeContext(tool_names=["deepdeep_deepseek_search"]), FakeConfig(config)
     )
 
 
 async def test_tool_registered_only_with_a_key(plugin_module):  # noqa: F811
     plugin = make(plugin_module)
-    assert names(plugin) == ["deepdeep_web_search"]
+    assert names(plugin) == ["deepdeep_deepseek_search"]
     save = api(plugin, "keys", "POST")
     CURRENT_REQUEST.body = {"service": "perplexity", "key": "pplx-secret-123456"}
     assert (await save())["changed"] is True
@@ -293,12 +293,16 @@ async def test_recognised_as_fallback_never_first_choice(plugin_module):  # noqa
         routing_mode="guide_only",
     )
     toolset = FakeToolSet(
-        ["deepdeep_web_search", "deepdeep_web_fetch", "deepdeep_perplexity_search"]
+        [
+            "deepdeep_deepseek_search",
+            "deepdeep_deepseek_fetch",
+            "deepdeep_perplexity_search",
+        ]
     )
     req = types.SimpleNamespace(func_tool=toolset, system_prompt="")
     await plugin.route_search_tools(FakeEvent(), req)
     assert (
-        "优先 deepdeep_web_search；没有结果或结果不理想时再用 deepdeep_perplexity_search"
+        "优先 deepdeep_deepseek_search；没有结果或结果不理想时再用 deepdeep_perplexity_search"
         in req.system_prompt
     )
     assert plugin.router.search_category("deepdeep_perplexity_search") == "fallback"

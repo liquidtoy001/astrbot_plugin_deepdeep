@@ -111,8 +111,8 @@ def test_success_resets_consecutive_count():
 # ---------- 路由 ----------
 
 NAMES = [
-    "deepdeep_web_search",
-    "deepdeep_web_fetch",
+    "deepdeep_deepseek_search",
+    "deepdeep_deepseek_fetch",
     "web_search_tavily",
     "tavily_extract_web_page",
     "searxng_web_search_general",
@@ -127,7 +127,7 @@ FALLBACK = {
     "searxng_web_search_general",
     "searxng_web_fetch_url",
 }
-OWN = {"deepdeep_web_search", "deepdeep_web_fetch"}
+OWN = {"deepdeep_deepseek_search", "deepdeep_deepseek_fetch"}
 
 
 def test_default_patterns_classify_known_tools():
@@ -276,15 +276,15 @@ def test_no_deepseek_tools_in_request_means_no_change():
 
 def test_only_hides_the_kind_deepseek_can_replace():
     names = [
-        "deepdeep_web_search",
+        "deepdeep_deepseek_search",
         "web_search_tavily",
         "tavily_extract_web_page",
         "searxng_web_fetch_url",
     ]
     assert ToolRouter("deepseek_first", lane_rules=[]).plan(names, True) == {
         "web_search_tavily"
-    }  # 没有 deepdeep_web_fetch，抓取工具保留
-    names = ["deepdeep_web_fetch", "web_search_tavily", "searxng_web_fetch_url"]
+    }  # 没有 deepdeep_deepseek_fetch，抓取工具保留
+    names = ["deepdeep_deepseek_fetch", "web_search_tavily", "searxng_web_fetch_url"]
     assert ToolRouter("deepseek_first", lane_rules=[]).plan(names, True) == {
         "searxng_web_fetch_url"
     }
@@ -294,7 +294,12 @@ def test_restore_also_updates_replaced_request_toolset():
     # skills_like 模式：AstrBot 在钩子之后把 req.func_tool 换成精简版工具集
     router = ToolRouter("deepseek_first", lane_rules=[])
     raw = _TS(
-        ["deepdeep_web_search", "deepdeep_web_fetch", "web_search_tavily", "other"]
+        [
+            "deepdeep_deepseek_search",
+            "deepdeep_deepseek_fetch",
+            "web_search_tavily",
+            "other",
+        ]
     )
     req = type("Req", (), {})()
     req.func_tool = raw
@@ -305,7 +310,7 @@ def test_restore_also_updates_replaced_request_toolset():
     assert restored == ["web_search_tavily"]
     for ts in (raw, light):
         assert "web_search_tavily" in ts.names()
-        assert "deepdeep_web_search" not in ts.names()
+        assert "deepdeep_deepseek_search" not in ts.names()
     # 重复调用是幂等的
     assert router.restore_fallback(state, drop_own=True) == ["web_search_tavily"]
     assert light.names().count("web_search_tavily") == 1
@@ -352,8 +357,8 @@ def test_stats_report_uses_billing_currency():
 # ---------- 超出预算时不降级到同一 DeepSeek 账户计费的工具 ----------
 
 BUDGET_NAMES = [
-    "deepdeep_web_search",
-    "deepdeep_web_fetch",
+    "deepdeep_deepseek_search",
+    "deepdeep_deepseek_fetch",
     "web_search_deepseek",  # AstrBot 4.29.1 内置的 DeepSeek 搜索
     "deepseek_fetch_web_page",
     "web_search_tavily",
@@ -364,17 +369,17 @@ BUDGET_NAMES = [
 def test_budget_cap_keeps_same_backend_hidden():
     r = ToolRouter("deepseek_first", lane_rules=[])
     assert r.is_same_backend("web_search_deepseek") and not r.is_same_backend(
-        "deepdeep_web_search"
+        "deepdeep_deepseek_search"
     )
     # 故障：所有备用工具都可以用
     assert r.plan(BUDGET_NAMES, False, "circuit_open") == {
-        "deepdeep_web_search",
-        "deepdeep_web_fetch",
+        "deepdeep_deepseek_search",
+        "deepdeep_deepseek_fetch",
     }
     # 超出预算：DeepSeek 计费的备用工具也藏起来
     assert r.plan(BUDGET_NAMES, False, "budget_daily") == {
-        "deepdeep_web_search",
-        "deepdeep_web_fetch",
+        "deepdeep_deepseek_search",
+        "deepdeep_deepseek_fetch",
         "web_search_deepseek",
         "deepseek_fetch_web_page",
     }
@@ -382,7 +387,7 @@ def test_budget_cap_keeps_same_backend_hidden():
 
 def test_budget_cap_with_only_same_backend_fallback():
     # 唯一的备用就是内置 DeepSeek：藏起它，保留自己的工具让模型拿到“超出预算”的说明
-    names = ["deepdeep_web_search", "web_search_deepseek"]
+    names = ["deepdeep_deepseek_search", "web_search_deepseek"]
     assert ToolRouter("deepseek_first", lane_rules=[]).plan(
         names, False, "budget_monthly"
     ) == {"web_search_deepseek"}
@@ -424,7 +429,7 @@ def test_specialist_rules_parse_and_match():
     assert r.specialty("searxng_web_search_images") == "找图片"
     assert r.specialty("search_papers") == "论文"
     assert r.specialty("searxng_web_search_map") == "专用搜索"  # 没写说明时的默认文案
-    assert r.specialty("deepdeep_web_search") is None
+    assert r.specialty("deepdeep_deepseek_search") is None
     # 专用工具不算备用，即使匹配了备用规则
     assert not r.is_fallback("searxng_web_search_images")
     assert r.search_category("searxng_web_search_images") == "special"
@@ -435,8 +440,8 @@ def test_specialist_rules_parse_and_match():
 def test_guide_lists_only_present_tools_in_rule_order():
     r = ToolRouter("deepseek_first", lane_rules=[])
     names = [
-        "deepdeep_web_search",
-        "deepdeep_web_fetch",
+        "deepdeep_deepseek_search",
+        "deepdeep_deepseek_fetch",
         "searxng_web_search_videos",
         "searxng_web_search_images",
         "search_papers",
@@ -446,8 +451,8 @@ def test_guide_lists_only_present_tools_in_rule_order():
     lines = r.guide(names).splitlines()
     assert lines[0].startswith("【搜索工具分工】")
     assert lines[1:] == [
-        "- 通用网页搜索（新闻、事实、中文资料等）：deepdeep_web_search",
-        "- 读取网页全文：deepdeep_web_fetch",
+        "- 通用网页搜索（新闻、事实、中文资料等）：deepdeep_deepseek_search",
+        "- 读取网页全文：deepdeep_deepseek_fetch",
         "- 找图片：searxng_web_search_images",
         "- 找视频（B 站、YouTube 等视频平台）：searxng_web_search_videos",
         "- 学术论文和期刊：searxng_web_search_academic",
@@ -467,7 +472,7 @@ def test_guide_uses_fallback_tools_when_deepseek_hidden():
 def test_no_guide_without_specialists():
     assert (
         ToolRouter("deepseek_first", lane_rules=[]).guide(
-            ["deepdeep_web_search", "deepdeep_web_fetch"]
+            ["deepdeep_deepseek_search", "deepdeep_deepseek_fetch"]
         )
         is None
     )
@@ -483,7 +488,7 @@ def test_guide_caps_long_groups():
         "search_paper_text",
         "search_papers",
     ]
-    guide = r.guide(["deepdeep_web_search", *papers])
+    guide = r.guide(["deepdeep_deepseek_search", *papers])
     line = next(x for x in guide.splitlines() if x.startswith("- 学术论文（arXiv 等）"))
     # 带 search 的排在前面，最多列 3 个，其余用“等 N 个”概括
     assert (
@@ -515,14 +520,17 @@ def test_alternatives_rank_general_engines_first():
 def test_own_disabled_hides_own_tools_and_ranks_builtin_deepseek_first():
     r = ToolRouter(own_enabled=False)
     names = [
-        "deepdeep_web_search",
-        "deepdeep_web_fetch",
+        "deepdeep_deepseek_search",
+        "deepdeep_deepseek_fetch",
         "searxng_web_search_general",
         "web_search_deepseek",
         "deepseek_fetch_web_page",
         "searxng_web_search_images",
     ]
-    assert r.plan(names, True) == {"deepdeep_web_search", "deepdeep_web_fetch"}
+    assert r.plan(names, True) == {
+        "deepdeep_deepseek_search",
+        "deepdeep_deepseek_fetch",
+    }
     rest = [n for n in names if not n.startswith("deepdeep")]
     assert r.alternatives(rest, "search")[0] == "web_search_deepseek"
     guide = r.guide(rest)
@@ -530,7 +538,7 @@ def test_own_disabled_hides_own_tools_and_ranks_builtin_deepseek_first():
         "优先 web_search_deepseek；没有结果或结果不理想时再用 searxng_web_search_general"
         in guide
     )
-    assert "deepdeep_web_search" not in guide
+    assert "deepdeep_deepseek_search" not in guide
     lanes = r.lanes(names)
     assert lanes[0]["primary"] == "web_search_deepseek"
     assert lanes[1] == {
@@ -546,7 +554,7 @@ def test_own_disabled_hides_own_tools_and_ranks_builtin_deepseek_first():
 def test_lanes_follow_guide_order():
     r = ToolRouter()
     names = [
-        "deepdeep_web_search",
+        "deepdeep_deepseek_search",
         "web_search_serpapi",
         "searxng_web_search_general",
         "scholar_search_serpapi",
@@ -554,7 +562,7 @@ def test_lanes_follow_guide_order():
         "finance_search_serpapi",
     ]
     lanes = {lane["title"]: lane for lane in r.lanes(names)}
-    assert lanes["通用网页搜索"]["primary"] == "deepdeep_web_search"
+    assert lanes["通用网页搜索"]["primary"] == "deepdeep_deepseek_search"
     assert lanes["通用网页搜索"]["backups"] == [
         "web_search_serpapi",
         "searxng_web_search_general",
@@ -567,11 +575,11 @@ def test_lanes_follow_guide_order():
 
 
 def test_no_key_hides_own_tools_when_other_tools_exist():
-    names = ["deepdeep_web_search", "deepdeep_web_fetch", "web_search_bocha"]
+    names = ["deepdeep_deepseek_search", "deepdeep_deepseek_fetch", "web_search_bocha"]
     r = ToolRouter("guide_only")
     assert r.plan(names, False, "no_key") == {
-        "deepdeep_web_search",
-        "deepdeep_web_fetch",
+        "deepdeep_deepseek_search",
+        "deepdeep_deepseek_fetch",
     }
     # 临时故障不隐藏（保持工具列表不变，保护提示词缓存）
     assert r.plan(names, False, "circuit_open") == set()
@@ -580,7 +588,7 @@ def test_no_key_hides_own_tools_when_other_tools_exist():
 
 
 def test_no_key_keeps_own_tools_when_nothing_else_or_deepseek_only():
-    own = ["deepdeep_web_search", "deepdeep_web_fetch"]
+    own = ["deepdeep_deepseek_search", "deepdeep_deepseek_fetch"]
     # 没有别的工具：保留，让模型拿到“未配置”的明确说明
     assert ToolRouter("guide_only").plan(own, False, "no_key") == set()
     # 只有专用搜索也不算有替代

@@ -16,18 +16,9 @@ const UNAVAILABLE_TITLES = {
   circuit_open: "连续失败，已暂停",
 };
 const MODE_TEXT = {
-  guide_only: "只引导",
-  deepseek_first: "DeepSeek 优先",
+  guide_only: "提醒模型换一家",
+  deepseek_first: "自动切换",
   deepseek_only: "只用 DeepSeek",
-  fallback_only: "暂停 DeepSeek",
-  coexist: "不干预",
-};
-const MODE_HINTS = {
-  guide_only: "不隐藏任何工具，只在分工说明里写清先用谁、什么情况再换；工具列表不变，不影响提示词缓存",
-  deepseek_first: "DeepSeek 可用时隐藏同类工具，选择更集中；每次切换会让提示词缓存失效一次",
-  deepseek_only: "始终隐藏其他通用搜索工具，DeepSeek 不可用时也不降级",
-  fallback_only: "隐藏 DeepDeep 的工具，只用其他搜索（与关闭 DeepSeek 搜索开关效果相同）",
-  coexist: "所有搜索工具并存，由模型自己选",
 };
 const VERDICT = {
   broken: ["基本失效", "bad"],
@@ -186,13 +177,21 @@ function rerenderAll() {
   if (lastOverview) renderLanes(lastOverview);
   if (lastSearchStats) renderSearchStats(lastSearchStats);
   if (lastCalls) renderCallsPage(lastCalls);
+  if (lastKbStats) {
+    renderKbPanel(lastKbStats);
+    renderKbTrim(lastKbStats);
+  }
+  if (lastKbStatus) renderKbStatus(lastKbStatus);
+  if (lastMcp) renderMcp(lastMcp);
+  if (lastMcpStatus) renderMcpStatus(lastMcpStatus);
+  if (lastCategories) renderCategories(lastCategories);
   if (lastFacets) renderFacets(lastFacets);
   if (lastRouting) renderRouting(lastRouting);
   if (lastNetwork) renderNetwork(lastNetwork);
   if (lastCatalog) renderCatalog(lastCatalog);
+  if (trendDays.length) renderTrend(trendDays);
   renderPref();
   if (usageDays.length) renderChart(usageDays);
-  updateModeHint();
   updateBudgetHints();
 }
 
@@ -216,7 +215,7 @@ function renderBanner() {
   if (!s || !o) return;
   const mode = s.settings.routing_mode;
   const modeText = t("路由模式：{mode}", { mode: t(MODE_TEXT[mode] || mode) });
-  const OWN = ["deepdeep_web_search", "deepdeep_web_fetch"];
+  const OWN = ["deepdeep_deepseek_search", "deepdeep_deepseek_fetch"];
   const lanes = o.lanes || [];
   const general = lanes.find((l) => l.key === "search");
   const noKey = s.unavailable_code === "no_key";
@@ -266,8 +265,6 @@ function renderStatus(s) {
 
   renderBanner();
   $("btn-reset").hidden = !s.circuit.open;
-  // 没有 Key 或关闭了自带搜索时，没有东西可测
-  $("btn-test").hidden = !s.key.configured || !s.settings.own_tools_enabled;
 
   renderSpending(s.spending);
 
@@ -276,7 +273,7 @@ function renderStatus(s) {
     // 调用日志关闭时只有 DeepSeek 自己的统计，这时要说明一下，否则数字的含义变了
     const detail = $(`today-${kind}-detail`);
     detail.hidden = all.logging_enabled;
-    detail.textContent = all.logging_enabled ? "" : t("调用日志已关闭，只统计 DeepSeek");
+    detail.replaceChildren(...(all.logging_enabled ? [] : [t("调用日志已关闭，只统计 DeepSeek"), " ", settingLink("call_log_enabled", "去开启")]));
     $(`today-${kind}`).textContent = t("{n} 次", { n: all.logging_enabled ? all[kind].total : s.today[kind].billable });
   }
 
@@ -292,79 +289,11 @@ function renderStatus(s) {
 // 第 9 个开始合并成“其他”：分类色只有 8 个，不生成新颜色
 const SERIES_SLOTS = 8;
 
-// 圆环图：每一段是一家的份额，中间是合计。段之间留 2px 的缝，图例和下面的表写着具体数字
-function renderSpendDonut(segs, total) {
-  const box = $("spend-donut");
-  const tip = $("spend-tip");
-  tip.hidden = true;
-  box.replaceChildren();
-  box.hidden = !segs.length;
-  if (!segs.length) return;
-  const NS = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(NS, "svg");
-  svg.setAttribute("viewBox", "0 0 160 160");
-  svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", segs.map((x) => `${x.name} ${Math.round(x.share * 100)}%`).join(", "));
-  const R = 62;
-  const C = 2 * Math.PI * R;
-  const gap = segs.length > 1 ? 2 : 0;
-  let start = 0;
-  for (const x of segs) {
-    const len = x.share * C;
-    const arc = document.createElementNS(NS, "circle");
-    arc.setAttribute("cx", 80);
-    arc.setAttribute("cy", 80);
-    arc.setAttribute("r", R);
-    arc.setAttribute("fill", "none");
-    arc.setAttribute("stroke-width", 24);
-    arc.setAttribute("class", "spend-arc");
-    arc.setAttribute("tabindex", "0");
-    arc.style.stroke = x.color;
-    arc.setAttribute("stroke-dasharray", `${Math.max(1, len - gap)} ${C - Math.max(1, len - gap)}`);
-    arc.setAttribute("stroke-dashoffset", String(-start));
-    arc.setAttribute("transform", "rotate(-90 80 80)");
-    const show = (e) => {
-      tip.textContent = `${x.name} · ${x.costText} · ${Math.round(x.share * 100)}%`;
-      tip.hidden = false;
-      const parent = $("sec-spend").getBoundingClientRect();
-      const r = box.getBoundingClientRect();
-      const px = e.clientX || r.left + r.width / 2;
-      const py = e.clientY || r.top + r.height / 2;
-      tip.style.left = `${Math.max(0, Math.min(parent.width - tip.offsetWidth, px - parent.left + 10))}px`;
-      tip.style.top = `${py - parent.top + 10}px`;
-    };
-    arc.addEventListener("mousemove", show);
-    arc.addEventListener("focus", show);
-    arc.addEventListener("click", show);
-    arc.addEventListener("mouseleave", () => (tip.hidden = true));
-    arc.addEventListener("blur", () => (tip.hidden = true));
-    svg.append(arc);
-    start += len;
-  }
-  const label = (y, cls, text) => {
-    const node = document.createElementNS(NS, "text");
-    node.setAttribute("x", 80);
-    node.setAttribute("y", y);
-    node.setAttribute("text-anchor", "middle");
-    node.setAttribute("class", cls);
-    node.textContent = text;
-    svg.append(node);
-  };
-  label(76, "donut-caption", t("合计"));
-  label(96, "donut-total", total);
-  box.append(svg);
-}
-
 function renderSpending(sp) {
   if (!sp) return;
   const money2 = (n) => amount(n, sp.currency);
-  // 概览：一行
   const has = sp.services.length > 0 || sp.total > 0;
   $("spend-card").hidden = !has;
-  $("spend-line").textContent = sp.limit
-    ? t("本月约 {total} / 上限 {limit}", { total: money2(sp.total), limit: money2(sp.limit) })
-    : t("本月约 {total}", { total: money2(sp.total) });
-  setMeter("month-meter", sp.ratio);
   $("spend-note").textContent = sp.excluded.length ? t("另有 {n} 个未计入", { n: sp.excluded.length }) : "";
 
   // 用量页：各服务的份额。颜色跟着服务走（按表里的固定顺序），不跟排名
@@ -382,44 +311,48 @@ function renderSpending(sp) {
       color: "var(--muted)",
     });
   }
-  $("spend-summary").textContent = sp.limit
-    ? t("合计约 {total}，上限 {limit}", { total: money2(sp.total), limit: money2(sp.limit) })
-    : t("合计约 {total}，没有设上限", { total: money2(sp.total) });
-  renderSpendDonut(segs, money2(sp.total));
-  $("spend-legend").replaceChildren(
-    ...segs.map((x) =>
-      el("li", {}, (() => {
-        const s = el("i", { class: "spend-swatch" });
-        s.style.background = x.color;
-        return s;
-      })(), el("span", {}, x.name), el("span", { class: "muted" }, `${money2(x.cost)} · ${Math.round(x.share * 100)}%`)),
-    ),
-  );
+  $("spend-summary").replaceChildren(sp.limit ? t("合计约 {total}，上限 {limit}", { total: money2(sp.total), limit: money2(sp.limit) }) : t("合计约 {total}，没有设上限", { total: money2(sp.total) }), " ", settingLink("monthly_budget", sp.limit ? "改上限" : "设上限"));
+  renderBudgetRing(sp, segs, money2);
+  // 一家一行：条的长度是花费，颜色跟预算环一致
+  const colorOf = (x) => (x.cost > 0 ? (slots.get(x.key) < SERIES_SLOTS ? `var(--series-${slots.get(x.key) + 1})` : "var(--muted)") : "transparent");
+  const maxCost = Math.max(...sp.services.map((x) => x.cost), 0);
   const rows = [...sp.services]
     .sort((a, b) => b.cost - a.cost || b.calls - a.calls)
-    .map((x) =>
-      el(
-        "tr",
-        {},
-        el("td", {}, el("strong", {}, tr(x.name)), x.note ? el("div", { class: "muted small" }, tr(x.note)) : null),
-        el("td", { class: "num" }, x.calls),
-        el("td", { class: "num" }, x.free_quota ? `${x.free_used} / ${x.free_quota}` : "–"),
-        el("td", { class: "num" }, money2(x.cost)),
-        el("td", { class: "num" }, `${Math.round(x.share * 100)}%`),
-      ),
-    );
-  if (rows.length) foldInto($("spend-body"), "spend", rows, { colspan: 5 });
-  else $("spend-body").replaceChildren(emptyRow(5, t("本月还没有付费服务的调用")));
+    .map((x) => {
+      const fill = el("span", { class: "hbar-fill" });
+      fill.style.width = maxCost > 0 && x.cost > 0 ? `${Math.max(1, (x.cost / maxCost) * 100)}%` : "0";
+      fill.style.background = colorOf(x);
+      const facts = [t("本月 {n} 次", { n: x.calls })];
+      if (x.free_quota) facts.push(t("免费额度 {used} / {quota}", { used: x.free_used, quota: x.free_quota }));
+      if (x.note) facts.push(tr(x.note));
+      return el(
+        "div",
+        { class: "spend-row" },
+        el("div", { class: "spend-row-head" }, el("strong", {}, tr(x.name)), el("span", {}, money2(x.cost), el("span", { class: "muted small" }, ` · ${Math.round(x.share * 100)}%`))),
+        el("span", { class: "hbar-track" }, fill),
+        el("div", { class: "muted small" }, facts.join(" · ")),
+      );
+    });
+  if (rows.length) foldInto($("spend-list"), "spend", rows);
+  else $("spend-list").replaceChildren(el("p", { class: "muted small" }, t("本月还没有付费服务的调用")));
   const over = $("spend-over");
   over.hidden = !sp.over;
-  over.textContent = sp.blocked.length
+  over.replaceChildren(
+    sp.blocked.length
     ? t("已达到上限，本月暂停提供：{list}。DeepSeek 按费用上限的方式处理，下个月自动恢复", { list: joinList(sp.blocked) })
-    : t("已达到上限。DeepSeek 按费用上限的方式处理，下个月自动恢复");
+    : t("已达到上限。DeepSeek 按费用上限的方式处理，下个月自动恢复"),
+    " ",
+    settingLink("monthly_budget", "改上限"),
+  );
   const ex = $("spend-excluded");
   ex.hidden = !sp.excluded.length;
-  ex.textContent = t("未计入（不知道价格，或汇率是 0）：{list}。这些服务不算进合计，超出上限时也不会被拿掉。在设置页的搜索服务里填上单价就会计入", {
+  ex.replaceChildren(
+    t("未计入（不知道价格，或汇率是 0）：{list}。这些服务不算进合计，超出上限时也不会被拿掉。在设置页的搜索服务里填上单价就会计入", {
     list: joinList(sp.excluded.map((x) => (x.calls ? `${tr(x.name)}（${x.calls}）` : tr(x.name)))),
-  });
+  }),
+    " ",
+    settingLink("sec-catalog", "去填单价"),
+  );
 }
 
 // 搜索结果和请求相关的设置
@@ -433,7 +366,6 @@ function fillForm(st) {
   form.tool_monthly_limits.value = (st.tool_monthly_limits || []).join("\n");
   form.search_lane_rules.value = (st.search_lane_rules || []).join("\n");
   form.routing_mode.value = st.routing_mode;
-  updateModeHint();
   form.billing_currency.value = st.billing_currency;
   form.daily_budget.value = st.daily_budget;
   form.monthly_budget.value = st.monthly_budget;
@@ -450,10 +382,6 @@ function fillForm(st) {
   form.call_log_retention_days.value = st.call_log_retention_days;
   for (const name of NUMBER_SETTINGS) form[name].value = st[name];
   for (const name of CHECK_SETTINGS) form[name].checked = st[name];
-}
-
-function updateModeHint() {
-  $("mode-hint").textContent = t(MODE_HINTS[form.routing_mode.value] || "");
 }
 
 // 输入费用上限时实时显示对应的另一种币种金额（按表单里的汇率）
@@ -511,40 +439,189 @@ function renderCaps(s) {
   const tv = s.tavily;
   if (tv?.monthly_limit > 0) rows.unshift({ name: "deepdeep_tavily_search", tools: [], used: tv.month_used, limit: tv.monthly_limit });
   $("sec-caps").hidden = !rows.length;
-  const body = $("caps-body");
-  body.replaceChildren();
-  const capRows = [];
-  for (const r of rows) {
-    const full = r.used >= r.limit;
-    capRows.push(
-      el(
-        "tr",
-        {},
-        el("td", {}, el("code", {}, r.name), r.tools.length && !(r.tools.length === 1 && r.tools[0] === r.name) ? el("div", { class: "muted small tools-line", title: r.tools.join("\n") }, joinList(r.tools)) : null),
-        el("td", { class: "num" }, r.used),
-        el("td", { class: "num" }, r.limit),
-        el("td", {}, el("span", { class: `badge ${full ? "bad" : r.used >= r.limit * 0.8 ? "warn" : "ok"}` }, full ? t("已达上限，本月不再提供") : t("正常"))),
-      ),
+  // 规则可能很长（一家服务的所有工具），能对上服务就显示服务名
+  const nameOf = (pattern) => tr(lastCatalog?.find((e) => e.cap?.pattern === pattern)?.name || pattern);
+  const capRows = rows.map((r) => {
+    const ratio = r.limit ? r.used / r.limit : 0;
+    const level = ratio >= 1 ? "bad" : ratio >= 0.8 ? "warn" : "ok";
+    const fill = el("span", { class: level === "ok" ? "" : level });
+    fill.style.width = `${Math.min(100, ratio * 100)}%`;
+    return el(
+      "div",
+      { class: "cap-usage" },
+      el("div", { class: "spend-row-head" }, el("strong", { title: r.name }, r.name === "deepdeep_tavily_search" ? "Tavily" : nameOf(r.name)), el("span", {}, `${r.used} / ${r.limit}`)),
+      el("div", { class: "meter" }, fill),
+      ratio >= 1 ? el("div", { class: "small bad-text" }, t("已达上限，本月不再提供")) : null,
     );
+  });
+  if (capRows.length) foldInto($("caps-list"), "caps", capRows);
+}
+
+// ---------- 概览的图 ----------
+
+const svgEl = (name, attrs = {}) => {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  return node;
+};
+
+// 预算环：一整圈（270°）是上限，每家服务占一段，颜色和搜索用量页一致
+function renderBudgetRing(sp, segs, money2) {
+  const box = $("spend-ring");
+  const R = 70;
+  const SWEEP = 270;
+  const LEN = 2 * Math.PI * R * (SWEEP / 360);
+  const C = 2 * Math.PI * R;
+  const whole = sp.limit ? Math.max(sp.limit, sp.total) : sp.total;
+  const svg = svgEl("svg", { viewBox: "0 0 180 160", role: "img", "aria-label": `${money2(sp.total)}${sp.limit ? ` / ${money2(sp.limit)}` : ""}` });
+  const arc = (from, to, attrs) => {
+    const length = Math.max(0, to - from);
+    return svgEl("circle", { cx: 90, cy: 86, r: R, fill: "none", "stroke-dasharray": `${length} ${C - length}`, "stroke-dashoffset": -from, transform: "rotate(135 90 86)", ...attrs });
+  };
+  svg.append(arc(0, LEN, { class: "ring-track", "stroke-width": 12 }));
+  let at = 0;
+  if (whole > 0) {
+    for (const seg of segs) {
+      const length = (seg.cost / whole) * LEN;
+      // 太小的段也要看得见
+      const shown = Math.max(4, length - (segs.length > 1 ? 2 : 0));
+      const node = arc(at, at + shown, { "stroke-width": 12 });
+      node.style.stroke = seg.color;
+      const title = svgEl("title");
+      title.textContent = `${seg.name} · ${seg.costText}`;
+      node.append(title);
+      svg.append(node);
+      at += length;
+    }
   }
-  if (capRows.length) foldInto(body, "caps", capRows, { colspan: 4 });
+  const now = new Date();
+  const monthDays = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const progress = (now.getDate() - 1 + now.getHours() / 24) / monthDays;
+  const label = (y, cls, text) => {
+    const node = svgEl("text", { x: 90, y, "text-anchor": "middle", class: cls });
+    node.textContent = text;
+    svg.append(node);
+  };
+  label(82, "ring-value", money2(sp.total));
+  if (sp.limit) {
+    // 花费很小时环上看不出变化，百分比能看出来
+    const used = (sp.total / sp.limit) * 100;
+    label(100, "ring-used", t("已用 {pct}%", { pct: used >= 10 ? Math.round(used) : used.toFixed(1) }));
+    label(116, "ring-sub", t("上限 {limit}", { limit: money2(sp.limit) }));
+  } else {
+    label(102, "ring-sub", t("没有设上限"));
+  }
+  box.replaceChildren(svg);
+
+  const line = $("spend-forecast");
+  const estimate = progress > 0 && now.getDate() >= 3 ? sp.total / progress : null;
+  const risky = sp.limit && estimate !== null && estimate > sp.limit;
+  line.className = `small ${sp.over ? "bad-text" : risky ? "warn-text" : ""}`;
+  if (sp.over) line.textContent = t("已达到上限");
+  else if (estimate === null) line.textContent = "";
+  else if (risky) line.textContent = t("照这个速度，月底约 {amount}，会超过上限", { amount: money2(estimate) });
+  else line.textContent = t("照这个速度，月底约 {amount}", { amount: money2(estimate) });
+  $("ring-legend").replaceChildren(
+    ...segs.slice(0, 4).map((seg) => {
+      const key = el("i", { class: "spend-swatch" });
+      key.style.background = seg.color;
+      return el("li", {}, key, el("span", {}, seg.name), el("span", { class: "muted" }, seg.costText));
+    }),
+  );
+}
+
+// 搜索趋势：一条轴上两条线，今天的值在标题里，悬停看每一天
+let trendDays = [];
+
+function renderTrend(days) {
+  trendDays = days;
+  const box = $("trend");
+  if (!box.clientWidth) return;
+  const W = Math.max(260, Math.round(box.clientWidth));
+  const H = 170;
+  const pad = { l: 26, r: 10, t: 10, b: 20 };
+  const count = (d, kind) => d[kind].billable + (d[`other_${kind}`] || 0);
+  const KINDS = [["search", "搜索"], ["fetch", "抓取"]];
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
+  const total = days.reduce((sum, d) => sum + count(d, "search") + count(d, "fetch"), 0);
+  svg.setAttribute("aria-label", t("近 {days} 天 {sum} 次", { days: days.length, sum: total }));
+  const text = (x, y, content, cls, anchor = "start") => {
+    const node = svgEl("text", { x, y, class: cls, "text-anchor": anchor });
+    node.textContent = content;
+    svg.append(node);
+  };
+  const peak = Math.max(...days.flatMap((d) => [count(d, "search"), count(d, "fetch")]), 0);
+  if (!days.length || !peak) {
+    text(W / 2, H / 2, t("还没有调用"), "empty", "middle");
+    box.replaceChildren(svg);
+    return;
+  }
+  const top = Math.max(4, Math.ceil(peak / 4) * 4);
+  const plotH = H - pad.t - pad.b;
+  const stepX = (W - pad.l - pad.r) / Math.max(1, days.length - 1);
+  const px = (i) => pad.l + i * stepX;
+  const py = (v) => pad.t + plotH - (v / top) * plotH;
+  for (const v of [0, top / 2, top]) {
+    svg.append(svgEl("line", { x1: pad.l, x2: W - pad.r, y1: py(v), y2: py(v), class: "grid" }));
+    text(pad.l - 5, py(v) + 3, String(v), "axis", "end");
+  }
+  for (const i of [0, Math.floor((days.length - 1) / 2), days.length - 1]) {
+    text(px(i), H - 5, days[i].date.slice(5), "axis", i === 0 ? "start" : i === days.length - 1 ? "end" : "middle");
+  }
+  for (const [kind] of KINDS) {
+    const points = days.map((d, i) => `${px(i)},${py(count(d, kind))}`);
+    svg.append(svgEl("polygon", { points: `${px(0)},${py(0)} ${points.join(" ")} ${px(days.length - 1)},${py(0)}`, class: `trend-area ${kind}` }));
+    svg.append(svgEl("polyline", { points: points.join(" "), class: `trend-line ${kind}` }));
+    const last = days.length - 1;
+    svg.append(svgEl("circle", { cx: px(last), cy: py(count(days[last], kind)), r: 4, class: `trend-dot ${kind}` }));
+  }
+  const cross = svgEl("line", { y1: pad.t, y2: pad.t + plotH, class: "trend-cross", visibility: "hidden" });
+  const marks = KINDS.map(([kind]) => svgEl("circle", { r: 4, class: `trend-dot ${kind}`, visibility: "hidden" }));
+  svg.append(cross, ...marks);
+  const hit = svgEl("rect", { x: pad.l, y: pad.t, width: W - pad.l - pad.r, height: plotH, fill: "transparent" });
+  const tip = $("trend-tip");
+  const hide = () => {
+    tip.hidden = true;
+    cross.setAttribute("visibility", "hidden");
+    for (const mark of marks) mark.setAttribute("visibility", "hidden");
+  };
+  const show = (e) => {
+    const rect = svg.getBoundingClientRect();
+    const scale = W / rect.width;
+    const i = Math.max(0, Math.min(days.length - 1, Math.round(((e.clientX - rect.left) * scale - pad.l) / stepX)));
+    const d = days[i];
+    cross.setAttribute("x1", px(i));
+    cross.setAttribute("x2", px(i));
+    cross.setAttribute("visibility", "visible");
+    KINDS.forEach(([kind], k) => {
+      marks[k].setAttribute("cx", px(i));
+      marks[k].setAttribute("cy", py(count(d, kind)));
+      marks[k].setAttribute("visibility", "visible");
+    });
+    tip.textContent = t("{date}  搜索 {search} · 抓取 {fetch}", { date: d.date, search: count(d, "search"), fetch: count(d, "fetch") });
+    tip.hidden = false;
+    const card = box.closest(".trend-card").getBoundingClientRect();
+    tip.style.left = `${Math.max(0, Math.min(card.width - tip.offsetWidth, e.clientX - card.left + 12))}px`;
+    tip.style.top = `${e.clientY - card.top + 12}px`;
+  };
+  hit.addEventListener("mousemove", show);
+  hit.addEventListener("click", show);
+  hit.addEventListener("mouseleave", hide);
+  svg.append(hit);
+  box.replaceChildren(svg);
 }
 
 // ---------- 图表 ----------
 
 function renderChart(days) {
   const box = $("chart");
-  // 页面隐藏时量不到宽度，等切换到“用量”页再画
+  // 页面隐藏时量不到宽度，等切换到“搜索用量”再画
   if (!box.clientWidth) return;
-  box.replaceChildren();
-  const NS = "http://www.w3.org/2000/svg";
   // 按容器实际宽度绘制，避免拉伸导致文字变形
   const W = Math.max(280, Math.round(box.clientWidth));
   const H = 180;
   const pad = { l: 28, r: 6, t: 8, b: 20 };
-  const svg = document.createElementNS(NS, "svg");
-  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  svg.setAttribute("role", "img");
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" });
 
   // DeepSeek 的计费次数加上其他工具（调用日志）
   const count = (d, kind) => d[kind].billable + (d[`other_${kind}`] || 0);
@@ -552,79 +629,89 @@ function renderChart(days) {
   const max = Math.max(...totals, 0);
   const sum = totals.reduce((a, b) => a + b, 0);
   const st = lastStatus?.settings;
-  const scope = st && !st.call_log_enabled ? t("调用日志已关闭，只统计 DeepSeek") : st ? t("其他工具来自调用日志，只保留 {days} 天", { days: st.call_log_retention_days }) : "";
-  $("chart-summary").textContent = [t("30 天合计 {sum} 次", { sum }), scope].filter(Boolean).join(" · ");
+  $("chart-summary").replaceChildren(
+    ...(!st ? [] : !st.call_log_enabled ? [t("调用日志已关闭，只统计 DeepSeek"), " ", settingLink("call_log_enabled", "去开启")] : [t("其他工具来自调用日志，只保留 {days} 天", { days: st.call_log_retention_days }), " ", settingLink("call_log_retention_days", "改保留天数")]),
+  );
   svg.setAttribute("aria-label", t("近 30 天 {sum} 次", { sum }));
+  const peak = totals.indexOf(max);
+  const active = totals.filter(Boolean).length;
+  const stat = (label, value, hint) => el("div", { class: "chart-stat" }, el("div", { class: "muted small" }, t(label)), el("strong", {}, String(value)), hint ? el("span", { class: "muted small" }, ` ${hint}`) : "");
+  $("chart-stats").replaceChildren(
+    stat("合计", sum),
+    stat("有调用的日子平均", active ? Math.round(sum / active) : 0),
+    stat("最多的一天", max, max ? days[peak].date.slice(5) : ""),
+  );
 
   const text = (x, y, content, cls, anchor = "start") => {
-    const node = document.createElementNS(NS, "text");
-    node.setAttribute("x", x);
-    node.setAttribute("y", y);
-    node.setAttribute("class", cls);
-    node.setAttribute("text-anchor", anchor);
+    const node = svgEl("text", { x, y, class: cls, "text-anchor": anchor });
     node.textContent = content;
     svg.append(node);
   };
-
   if (max === 0) {
     text(W / 2, H / 2, t("还没有调用"), "empty", "middle");
-    box.append(svg);
+    box.replaceChildren(svg);
     return;
   }
 
   const plotH = H - pad.t - pad.b;
   const step = (W - pad.l - pad.r) / days.length;
-  const barW = Math.max(2, step * 0.68);
+  const barW = Math.min(24, Math.max(2, step * 0.68));
   const top = Math.ceil(max / 4) * 4 || 4;
-
   for (let i = 0; i <= 2; i++) {
     const v = (top / 2) * i;
     const y = pad.t + plotH - (v / top) * plotH;
-    const line = document.createElementNS(NS, "line");
-    line.setAttribute("x1", pad.l);
-    line.setAttribute("x2", W - pad.r);
-    line.setAttribute("y1", y);
-    line.setAttribute("y2", y);
-    line.setAttribute("class", "grid");
-    svg.append(line);
+    svg.append(svgEl("line", { x1: pad.l, x2: W - pad.r, y1: y, y2: y, class: "grid" }));
     text(pad.l - 4, y + 3, String(v), "axis", "end");
   }
-
+  const tip = $("chart-tip");
+  const band = svgEl("rect", { y: pad.t, width: step, height: plotH, class: "chart-band", visibility: "hidden" });
+  svg.append(band);
   days.forEach((d, i) => {
     const x = pad.l + i * step + (step - barW) / 2;
+    const parts = ["search", "fetch"].filter((kind) => count(d, kind));
     let y = pad.t + plotH;
-    const g = document.createElementNS(NS, "g");
-    const tip = document.createElementNS(NS, "title");
-    tip.textContent = t("{date}  搜索 {search} · 抓取 {fetch}", { date: d.date, search: count(d, "search"), fetch: count(d, "fetch") });
-    g.append(tip);
-    for (const kind of ["search", "fetch"]) {
-      const v = count(d, kind);
-      if (!v) continue;
-      const h = (v / top) * plotH;
+    parts.forEach((kind, k) => {
+      const h = Math.max(1, (count(d, kind) / top) * plotH);
       y -= h;
-      const r = document.createElementNS(NS, "rect");
-      r.setAttribute("x", x);
-      r.setAttribute("y", y);
-      r.setAttribute("width", barW);
-      r.setAttribute("height", Math.max(1, h));
-      r.setAttribute("class", `bar-${kind}`);
-      g.append(r);
-    }
-    // 透明的整列热区，方便悬停看提示
-    const hit = document.createElementNS(NS, "rect");
-    hit.setAttribute("x", pad.l + i * step);
-    hit.setAttribute("y", pad.t);
-    hit.setAttribute("width", step);
-    hit.setAttribute("height", plotH);
-    hit.setAttribute("fill", "transparent");
-    g.append(hit);
-    svg.append(g);
+      // 段之间留 2px，最上面一段圆角
+      const gap = k > 0 ? 2 : 0;
+      const height = Math.max(1, h - gap);
+      const radius = k === parts.length - 1 ? Math.min(4, barW / 2, height) : 0;
+      const yTop = y;
+      const yBottom = y + height;
+      svg.append(
+        svgEl("path", {
+          d: `M${x} ${yBottom}V${yTop + radius}Q${x} ${yTop} ${x + radius} ${yTop}H${x + barW - radius}Q${x + barW} ${yTop} ${x + barW} ${yTop + radius}V${yBottom}Z`,
+          class: `bar-${kind}`,
+        }),
+      );
+    });
     const every = W < 480 ? 10 : 5;
     if (i % every === 0 || i === days.length - 1) {
       text(x + barW / 2, H - 5, d.date.slice(5), "axis", "middle");
     }
   });
-  box.append(svg);
+  // 整个绘图区一个热区：指到哪天就高亮哪天
+  const hit = svgEl("rect", { x: pad.l, y: pad.t, width: W - pad.l - pad.r, height: plotH, fill: "transparent" });
+  const show = (e) => {
+    const rect = svg.getBoundingClientRect();
+    const i = Math.max(0, Math.min(days.length - 1, Math.floor((((e.clientX - rect.left) * W) / rect.width - pad.l) / step)));
+    band.setAttribute("x", pad.l + i * step);
+    band.setAttribute("visibility", "visible");
+    tip.textContent = t("{date}  搜索 {search} · 抓取 {fetch}", { date: days[i].date, search: count(days[i], "search"), fetch: count(days[i], "fetch") });
+    tip.hidden = false;
+    const card = box.closest(".chart-card").getBoundingClientRect();
+    tip.style.left = `${Math.max(0, Math.min(card.width - tip.offsetWidth, e.clientX - card.left + 12))}px`;
+    tip.style.top = `${e.clientY - card.top + 12}px`;
+  };
+  hit.addEventListener("mousemove", show);
+  hit.addEventListener("click", show);
+  hit.addEventListener("mouseleave", () => {
+    tip.hidden = true;
+    band.setAttribute("visibility", "hidden");
+  });
+  svg.append(hit);
+  box.replaceChildren(svg);
 }
 
 // ---------- 表格 ----------
@@ -635,9 +722,8 @@ function emptyRow(cols, message) {
 
 // 这类问题模型用什么，出问题时会怎样。内容都来自真实路由（web_api.route_preview）
 let lastRouting = null;
-let routeState = "ok";
+let routeState = "down";
 const ROUTE_STATES = [
-  ["ok", "正常"],
   ["down", "DeepSeek 故障"],
   ["budget", "超出上限"],
 ];
@@ -664,12 +750,11 @@ function routeRow(row) {
 }
 
 function routeNote(st, data) {
-  if (routeState === "ok") return t("模型按下面的顺序用，不理想时往后换。");
   const name = t(routeState === "down" ? "DeepSeek 故障" : "超出上限");
   const list = joinList(st.advice.map((x) => tr(x.label)));
   const parts = [];
   if (st.effect === "no_own") parts.push(t("现在没有用到 DeepSeek，{state}对它没有影响。", { state: name }));
-  if (st.effect === "advice") parts.push(t("{mode}模式不隐藏工具；{state}时模型会收到改用 {list} 的建议。", { mode: t(MODE_TEXT[data.mode] || data.mode), state: name, list }));
+  if (st.effect === "advice") parts.push(t("{state}时工具都留着，模型会收到改用 {list} 的提醒。", { state: name, list }));
   if (st.effect === "no_backup") parts.push(t("{state}时没有可用的备用工具，模型会告诉用户联网搜索暂时不可用。", { state: name }));
   if (st.effect === "swap") parts.push(list ? t("{state}时把 DeepSeek 从请求里拿掉，改用 {list}。", { state: name, list }) : t("{state}时把 DeepSeek 从请求里拿掉。", { state: name }));
   if (st.removed.length) parts.push(t("这些付费工具不再提供：{list}。", { list: joinList(st.removed.map((x) => tr(x.label))) }));
@@ -689,22 +774,36 @@ function renderRouting(data) {
   $("route-note").textContent = routeNote(st, data);
   const box = $("route-rows");
   if (st.rows.length) foldInto(box, `route:${routeState}`, st.rows.map(routeRow));
-  else if (routeState === "ok") box.replaceChildren(el("p", { class: "muted small" }, t("没有读取到搜索类工具")));
   else box.replaceChildren();
-  const missing = routeState === "ok" ? missingLine(st.missing) : "";
-  $("route-missing").hidden = !missing;
-  $("route-missing").textContent = missing;
   $("route-others").textContent = data.other_tools ? t("另有 {n} 个非搜索工具不受影响", { n: data.other_tools }) : "";
 }
 
 // 展开状态按记录 ID 记住，30 秒自动刷新时不会收起
 const openRows = new Set();
 
+// 文字里提到可以调的设置时，放一个能直接跳过去的链接
+function settingLink(target, label) {
+  return el("button", { type: "button", class: "link-btn go", "data-setting": target }, t(label));
+}
+
+async function goToSetting(target) {
+  await showPage("settings");
+  const field = form.elements[target];
+  const node = (field && !field.tagName ? field[0] : field) || $(target);
+  if (!node) return;
+  for (let d = node.closest("details"); d; d = d.parentElement?.closest("details")) d.open = true;
+  node.scrollIntoView({ block: "center" });
+  const box = node.closest(".field, .check, .card") || node;
+  box.classList.add("setting-flash");
+  setTimeout(() => box.classList.remove("setting-flash"), 1800);
+  if (node.matches("input, select, textarea")) node.focus({ preventScroll: true });
+}
+
 function kv(pairs) {
   const dl = el("dl", { class: "kv" });
   for (const [k, v] of pairs) {
     if (v === undefined || v === null || v === "") continue;
-    dl.append(el("dt", {}, t(k)), el("dd", {}, typeof v === "object" ? JSON.stringify(v) : String(v)));
+    dl.append(el("dt", {}, t(k)), el("dd", {}, v instanceof Node ? v : typeof v === "object" ? JSON.stringify(v) : String(v)));
   }
   return dl;
 }
@@ -829,6 +928,7 @@ function renderDetail(it) {
     grid.append(
       section(
         t("返回结果（相关度低于阈值的不会给模型；查询带 after:/before: 或问“最新”时不过滤）"),
+        settingLink("min_rerank_score", "改最低相关度"),
         el(
           "div",
           { class: "table-wrap" },
@@ -850,7 +950,7 @@ function renderDetail(it) {
         kv([
           ["标题", d.page.title],
           ["正文字数", d.page.content_chars],
-          ["是否截断", d.page.truncated ? t("是（超过抓取字数上限）") : t("否")],
+          ["是否截断", d.page.truncated ? el("span", {}, t("是（超过抓取字数上限）"), " ", settingLink("max_fetch_chars", "改字数上限")) : t("否")],
         ]),
       ),
     );
@@ -878,12 +978,28 @@ let callPage = 0;
 let callTotal = 0;
 let lastCalls = null;
 let lastFacets = null;
+let lastKbStats = null;
+let lastKbStatus = null;
+let lastMcp = null;
+let lastMcpStatus = null;
+let callCategory = "";
+let lastCategories = null;
 const callFilters = $("call-filters");
+
+// 这几个不是真实工具，只用来在调用日志里区分检索是怎么发起的
+const KB_TOOL_LABELS = {
+  astr_kb_inject: "知识库自动注入",
+  astr_kb_direct: "知识库直接检索",
+  kb_plugin_inject: "插件注入",
+};
+const toolLabel = (name) => (KB_TOOL_LABELS[name] ? t(KB_TOOL_LABELS[name]) : name);
 
 function sourceLabel(src) {
   if (!src) return "";
   if (src === "deepseek") return "DeepSeek";
   if (src === "builtin") return t("AstrBot 内置");
+  // DeepDeep 自己的工具（比如 Tavily）记的是插件名，和 DeepSeek 一样显示成正式的名字
+  if (src === "plugin:astrbot_plugin_deepdeep") return "DeepDeep";
   if (src.startsWith("plugin:")) return src.slice(7).replace(/^astrbot_plugin_/, "");
   if (src.startsWith("mcp:")) return `MCP · ${src.slice(4)}`;
   return src;
@@ -893,6 +1009,7 @@ function currentCallFilters() {
   const f = Object.fromEntries(new FormData(callFilters).entries());
   const params = {};
   for (const [k, v] of Object.entries(f)) if (v) params[k] = String(v).trim();
+  if (callCategory) params.category = callCategory;
   // 6 位十六进制视为请求 ID，精确匹配
   if (/^#?[0-9a-f]{6}$/i.test(params.q || "")) {
     params.request_id = params.q.replace("#", "").toLowerCase();
@@ -930,6 +1047,8 @@ function renderCallDetail(call) {
     ),
   );
 
+  if (call.kb && typeof call.kb === "object") grid.append(renderKbDetail(call));
+
   // DeepSeek 的调用有结构化详情，复用原来的展示
   if (call.detail && typeof call.detail === "object") {
     const it = {
@@ -957,6 +1076,8 @@ function renderCallDetail(call) {
         call.source === "deepseek"
           ? t("未记录搜索词和结果：设置里关闭了「记录搜索词、链接、DeepSeek 的返回结果，以及各搜索工具第一条结果的简述」。")
           : t("未记录参数和结果：默认只记录其他工具的名称、耗时和状态。需要时在「设置 → 高级设置」中开启「记录其他工具的完整参数和结果」，之后的调用会保存完整内容。"),
+        " ",
+        settingLink(call.source === "deepseek" ? "record_queries" : "call_log_record_other_content", "去设置"),
       ),
     );
   }
@@ -966,11 +1087,651 @@ function renderCallDetail(call) {
   return grid;
 }
 
-// 说明列：出错时显示原因，否则显示第一条结果的简述。请求 ID 在展开后的详情里
+const KB_MODES = {
+  tool: "模型调用工具",
+  inject: "发消息前自动注入",
+  direct: "插件或 WebUI 直接检索",
+  unscored: "插件工具（没有分数和来源）",
+  plugin_inject: "插件在发消息前注入（没有分数和来源）",
+};
+
+const score = (value) => (value === null || value === undefined ? "–" : Number(value).toFixed(2));
+const fmtTokens = (n) => Number(n || 0).toLocaleString();
+const tokenText = (n) => `${fmtTokens(n)} token`;
+
+function kbDegradedText(d) {
+  const parts = [];
+  if (d.dense_failed?.length) parts.push(t("向量检索失败：{kbs}", { kbs: d.dense_failed.join("、") }));
+  if (d.rerank_failed) parts.push(t("重排失败，分数不是重排分"));
+  return parts.join(" · ");
+}
+
+function renderKbFeedback(call) {
+  const box = el("div", { class: "kb-feedback" }, el("span", { class: "muted small" }, t("这次检索有用吗？")));
+  const buttons = [
+    ["good", "有用"],
+    ["bad", "没用"],
+  ].map(([value, label]) => {
+    const button = el("button", { type: "button", class: "btn ghost" }, t(label));
+    button.classList.toggle("active", call.feedback === value);
+    button.addEventListener("click", async () => {
+      const next = call.feedback === value ? null : value;
+      try {
+        await bridge.apiPost("call-feedback", { id: call.id, feedback: next });
+        call.feedback = next;
+        box.replaceWith(renderKbFeedback(call));
+        loadKbStats().catch(() => {});
+      } catch (err) {
+        toast(tr(err.message), true);
+      }
+    });
+    return button;
+  });
+  box.append(...buttons);
+  return box;
+}
+
+function renderKbDetail(call) {
+  const kb = call.kb;
+  const items = [["检索方式", t(KB_MODES[kb.mode] || kb.mode)]];
+  if (kb.mode === "plugin_inject") {
+    items.push(["消耗的接口", kb.embedding_calls || kb.rerank_calls ? t("向量 {embedding} 次 · 重排 {rerank} 次", { embedding: kb.embedding_calls, rerank: kb.rerank_calls }) : t("没有用 AstrBot 的嵌入和重排服务")]);
+  } else if (kb.mode !== "unscored") {
+    items.push(
+      ["查询的知识库", t("{n} 个", { n: kb.kb_count })],
+      ["消耗的接口", t("向量 {embedding} 次 · 重排 {rerank} 次", { embedding: kb.embedding_calls, rerank: kb.rerank_calls })],
+      ["最高分", score(kb.top_score)],
+    );
+  }
+  if (kb.degraded) items.push(["已降级", kbDegradedText(kb.degraded)]);
+  const used = kb.tokens || {};
+  if (used.result) items.push(["检索内容（估算）", tokenText(used.result)]);
+  if (used.next_input) items.push(["检索后下一轮的输入规模", tokenText(used.next_input)]);
+  if (used.final) {
+    items.push([
+      "最后一轮实际用量",
+      t("未缓存 {other} · 缓存 {cached} · 输出 {output}", { other: fmtTokens(used.final.input_other), cached: fmtTokens(used.final.input_cached), output: fmtTokens(used.final.output) }) + (used.shared_tools > 1 ? ` · ${t("这一轮共 {n} 个工具", { n: used.shared_tools })}` : ""),
+    ]);
+  }
+  const box = section(kb.mode === "plugin_inject" ? t("插件注入") : t("知识库检索"), kv(items));
+  const hits = kb.hits || [];
+  if (hits.length) {
+    box.append(
+      el(
+        "div",
+        { class: "table-wrap" },
+        el(
+          "table",
+          { class: "kb-hits" },
+          el("thead", {}, el("tr", {}, ...["分数", "来源", "片段"].map((h) => el("th", {}, t(h))))),
+          el(
+            "tbody",
+            {},
+            ...hits.map((hit) =>
+              el(
+                "tr",
+                {},
+                el("td", { class: "num" }, score(hit.score)),
+                el("td", {}, hit.kb ? `${hit.kb} / ${hit.doc || "?"}` : t("未记录")),
+                el("td", { class: "kb-snippet" }, hit.snippet || t("未记录")),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  box.append(renderKbFeedback(call));
+  return box;
+}
+
+// 说明列：出错时显示原因，知识库显示来源和分数，其他显示第一条结果的简述。请求 ID 在展开后的详情里
 function callNoteCell(it) {
-  const text = it.error ? tr(it.error) : it.top_hit || tr(it.note) || "";
+  let text = it.error ? tr(it.error) : it.top_hit || tr(it.note) || "";
+  if (!it.error && it.tool === "kb_plugin_inject") text = it.result_chars ? t("放入 {n} 字 · 没有分数和来源", { n: it.result_chars }) : t("查过了，没有放入内容");
+  else if (!it.error && it.kb_count === 0) text = t("没有检索到内容");
+  else if (!it.error && it.kb_count) {
+    const parts = [it.kb_degraded ? t("已降级") : "", it.top_hit, score(it.kb_top_score), t("{n} 条", { n: it.kb_count })];
+    text = parts.filter(Boolean).join(" · ");
+  }
   return el("td", { class: "target" }, el("span", { class: "call-note", title: text }, text));
 }
+
+const yuan = (value) => {
+  if (value === null || value === undefined) return "–";
+  if (value === 0) return "¥0";
+  return value < 0.01 ? "< ¥0.01" : `¥${value.toFixed(value < 10 ? 2 : 1)}`;
+};
+const shortTokens = (n) => {
+  const v = Number(n || 0);
+  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+  if (v >= 1e3) return `${(v / 1e3).toFixed(v >= 1e4 ? 0 : 1)}K`;
+  return String(v);
+};
+
+// 一句话回答一个问题：大数字、一行解释
+function answerCard(question, value, explain, extra) {
+  const card = el("div", { class: "answer" }, el("div", { class: "muted small" }, t(question)), el("div", { class: "answer-value" }, value), el("div", { class: "muted small" }, explain));
+  if (extra) card.append(extra);
+  return card;
+}
+
+// 横向条：名字、条、数字。条的长度按最大值算，hover 看解释
+function hbarList(rows) {
+  const max = Math.max(...rows.map((r) => r.value), 1);
+  return el(
+    "div",
+    { class: "hbars" },
+    ...rows.map((r) =>
+      el(
+        "div",
+        { class: "hbar-row", title: r.hint || `${r.label}：${r.text}` },
+        el("span", { class: "hbar-label" }, r.label),
+        el("span", { class: "hbar-track" }, el("span", { class: "hbar-fill", style: `width:${Math.max(2, (r.value / max) * 100)}%` })),
+        el("span", { class: "hbar-value" }, r.text),
+      ),
+    ),
+  );
+}
+
+// 分段条：钱花在哪。顺序和颜色固定，图例同时写明金额
+function costStack(segments) {
+  const total = segments.reduce((sum, seg) => sum + seg.value, 0);
+  const box = el("div", { class: "stack-wrap" });
+  if (total > 0) {
+    box.append(
+      el(
+        "div",
+        { class: "stack", role: "img", "aria-label": segments.map((seg) => `${seg.label} ${yuan(seg.value)}`).join("，") },
+        ...segments.filter((seg) => seg.value > 0).map((seg) => el("span", { class: `stack-seg ${seg.cls}`, style: `flex-grow:${(seg.value / total) * 100}`, title: `${seg.label}：${yuan(seg.value)}` })),
+      ),
+    );
+  }
+  box.append(el("div", { class: "stack-legend" }, ...segments.map((seg) => el("span", {}, el("i", { class: `stack-key ${seg.cls}` }), `${seg.label} ${yuan(seg.value)}`))));
+  return box;
+}
+
+function kbTips(s) {
+  const tips = [];
+  const hits = s.total - s.unscored - s.empty - s.error;
+  if (s.degraded) tips.push(t("有 {n} 次检索没有完整跑完（向量或重排失败），结果可能变差。可以查看向量和重排服务是否正常。", { n: s.degraded }));
+  if (s.total - s.unscored >= 5 && s.idle_kbs.length) tips.push(t("{kbs} 这段时间一次都没被用到。不需要的话可以从人格里移除，每次检索能少查 {n} 个库。", { kbs: s.idle_kbs.join("、"), n: s.idle_kbs.length }));
+  if (hits >= 5 && s.multi_kb / hits >= 0.5) tips.push(t("一半以上的检索结果分散在多个库。给不同人格只启用相关的库，结果通常更准，也更省。"));
+  if (s.total - s.unscored >= 5 && s.empty / (s.total - s.unscored) >= 0.3) tips.push(t("不少问题没查到内容，可能是知识库还没有这方面的资料。"));
+  if (s.avg_ms && s.avg_ms >= 8000) tips.push(t("每次检索平均要 {sec} 秒。启用的库越多越慢，每个库都要单独查一次向量。", { sec: (s.avg_ms / 1000).toFixed(1) }));
+  return tips;
+}
+
+// 有用量记录才算得出钱：旧记录只有调用次数，显示“无法估算”，不显示成 ¥0
+function kbCostCard(s) {
+  const unbilled = s.unbilled || 0;
+  const billedTokens = s.cost.rows.reduce((sum, row) => sum + (row.tokens || 0), 0);
+  if (unbilled && !billedTokens) {
+    return answerCard("嵌入和重排花了多少", t("无法估算"), t("{n} 次检索没有用量记录，多半是升级前的旧记录。之后的检索会记下来", { n: unbilled }));
+  }
+  if (!s.cost.total && s.cost.unpriced.length) {
+    return answerCard("嵌入和重排花了多少", t("还没有价格"), t("在下面填上价格就能算出来"));
+  }
+  const billed = Math.max(s.total - unbilled, 0);
+  const each = t("平均每次 {each}（估算）", { each: yuan(billed ? s.cost.total / billed : 0) });
+  return answerCard("嵌入和重排花了多少", yuan(s.cost.total), unbilled ? `${each} · ${t("另有 {n} 次检索没有用量记录，没算进去", { n: unbilled })}` : each);
+}
+
+function renderKbPanel(s) {
+  const panel = $("kb-panel");
+  if (!s.logging_enabled) {
+    panel.replaceChildren(el("p", { class: "muted small" }, t("调用日志已关闭，知识库检索不会被记录。"), " ", settingLink("call_log_enabled", "去开启")));
+    return;
+  }
+  if (!s.total) {
+    panel.replaceChildren(el("p", { class: "muted small" }, t("这段时间没有知识库检索记录。AstrBot 知识库检索后，这里会显示分数、来源和接口用量。")));
+    return;
+  }
+  const { good, bad } = s.feedback;
+  const found = s.total - s.unscored - s.empty - s.error;
+  const asked = s.total - s.unscored;
+  const marked = good.count + bad.count;
+  const goMark = el("button", { type: "button", class: "link-btn go" }, t("去标记"));
+  goMark.addEventListener("click", () => openCalls("kb"));
+  const answers = el(
+    "div",
+    { class: "answers" },
+    answerCard("查得到吗", asked ? `${Math.round((found / asked) * 100)}%` : "–", asked ? t("{total} 次检索，{found} 次返回了内容", { total: asked, found }) : t("社区插件不提供这项，看下面的记录")),
+    kbCostCard(s),
+    marked
+      ? answerCard("结果有用吗", `${Math.round((good.count / marked) * 100)}%`, t("你标记了 {n} 次，{good} 次有用", { n: marked, good: good.count }), goMark)
+      : answerCard("结果有用吗", t("还不知道"), t("只有你能判断。到检索记录里点“有用”或“没用”"), goMark),
+  );
+  const parts = [answers];
+  if (s.cost.rows.length) {
+    const block = el("div", { class: "kb-block" }, el("h3", {}, t("钱花在哪")));
+    if (s.cost.total > 0) {
+      block.append(
+        costStack([
+          { label: t("嵌入模型"), value: s.cost.embedding, cls: "s1" },
+          { label: t("重排模型"), value: s.cost.rerank, cls: "s2" },
+        ]),
+      );
+    }
+    block.append(kbCostRows(s.cost, s.unbilled || 0), el("p", { class: "muted small" }, t("按检索词和候选内容的长度估算。服务商的免费额度和按次计费这里看不到，以账单为准。")));
+    parts.push(block);
+  }
+  if (s.by_kb.length) {
+    parts.push(
+      el(
+        "div",
+        { class: "kb-block" },
+        el("h3", {}, t("结果来自哪些库")),
+        hbarList(s.by_kb.map((r) => ({ label: r.kb, value: r.hits, text: t("{n} 条", { n: r.hits }), hint: t("命中 {hits} 条，其中 {first} 次排第一，平均 {score} 分", { hits: r.hits, first: r.first, score: score(r.avg_score) }) }))),
+      ),
+    );
+  }
+  if (s.by_plugin?.length) {
+    parts.push(
+      el(
+        "div",
+        { class: "kb-block" },
+        el("h3", {}, t("社区知识库和记忆插件")),
+        ...s.by_plugin.map((r) =>
+          el(
+            "div",
+            { class: "kb-plugin" },
+            el("strong", {}, r.display_name || r.plugin),
+            el("div", { class: "muted small" }, t("{total} 次，没放内容 {empty} 次，失败 {error} 次 · 平均放入 {tokens} token · 平均 {ms} ms", { total: r.total, empty: r.empty, error: r.error, tokens: fmtTokens(r.avg_tokens), ms: r.avg_ms })),
+          ),
+        ),
+        el("p", { class: "muted small" }, t("这些插件不提供分数和来源，所以不算进“查得到吗”。嵌入和重排花费只包括通过 AstrBot 服务商发起的调用，插件自己直连的接口看不到。")),
+      ),
+    );
+  }
+  const tips = kbTips(s);
+  if (tips.length) parts.push(el("div", { class: "kb-block" }, el("h3", {}, t("可以改进的地方")), el("ul", { class: "kb-tips" }, ...tips.map((tip) => el("li", {}, tip)))));
+
+  const open = el("button", { type: "button", class: "btn ghost" }, t("查看每次检索记录"));
+  open.addEventListener("click", () => openCalls("kb"));
+  parts.push(el("div", {}, open));
+
+  const details = el(
+    "details",
+    { class: "kb-detail" },
+    el("summary", { class: "muted small" }, t("详细指标")),
+    kv([
+      ["平均最高分", score(s.avg_top_score)],
+      ["平均耗时", s.avg_ms ? `${s.avg_ms} ms` : ""],
+      ["命中多个库", `${s.multi_kb} / ${found}`],
+      ["已降级", s.degraded],
+      ["向量 / 重排调用", `${s.embedding_calls} / ${s.rerank_calls}`],
+      ["检索内容（估算）", tokenText(s.tokens.result)],
+      ["检索后下一轮的输入规模", s.tokens.next_rounds ? `${tokenText(s.tokens.next_input)} · ${t("{n} 轮", { n: s.tokens.next_rounds })}` : ""],
+      ["最后一轮未缓存 / 缓存", s.tokens.final_rounds ? `${fmtTokens(s.tokens.final_other)} / ${fmtTokens(s.tokens.final_cached)}` : ""],
+      ["标记有用的平均最高分", good.count ? score(good.avg_top_score) : ""],
+      ["标记没用的平均最高分", bad.count ? score(bad.avg_top_score) : ""],
+    ]),
+  );
+  if (s.by_doc.length) details.append(el("h3", {}, t("常被命中的文档")), hbarList(s.by_doc.slice(0, 10).map((r) => ({ label: r.doc, value: r.hits, text: t("{n} 条", { n: r.hits }), hint: `${r.kb} / ${r.doc}` }))));
+  const idle = [...s.idle_kbs, ...s.idle_docs.map((r) => `${r.kb} / ${r.doc}`)];
+  if (idle.length) details.append(el("h3", {}, t("这段时间没被命中（{n}）", { n: idle.length })), el("p", { class: "muted small" }, idle.slice(0, 50).join("、")));
+  details.append(el("p", { class: "muted small" }, t("分数只在同一个重排模型下有比较意义，这里不会自动判断好坏。花费只算嵌入和重排模型，token 按文字长度估算；对话模型多跑一轮的用量列在上面，不计入花费。")));
+  parts.push(details);
+  panel.replaceChildren(...parts);
+}
+
+function renderKbTrim(s) {
+  const scored = s.total - s.unscored;
+  const each = scored ? Math.round(s.tokens.result / scored) : 0;
+  const lines = [];
+  if (each) lines.push(t("每次检索大约给模型 {n} token 的内容。", { n: fmtTokens(each) }));
+  if (s.settings.final_top_k) lines.push(t("最直接的办法是调小 AstrBot 知识库设置里的返回条数（现在是 {n} 条）。", { n: s.settings.final_top_k }));
+  if (s.tokens.saved) lines.push(t("下面的设置这段时间省了约 {n} token。", { n: fmtTokens(s.tokens.saved) }));
+  $("kb-trim-tips").textContent = lines.join(" ");
+  const form = $("kb-trim-form");
+  if (document.activeElement?.form !== form) {
+    form.elements.kb_trim_chunk_chars.value = s.settings.trim_chunk_chars || 0;
+    form.elements.kb_trim_min_score.value = s.settings.trim_min_score || 0;
+  }
+}
+
+function renderKbPlugins(status) {
+  const plugins = status.plugins || [];
+  $("kb-plugins").hidden = !plugins.length;
+  $("kb-plugins-list").replaceChildren(
+    ...plugins.map((p) =>
+      el(
+        "div",
+        { class: "kb-plugin" },
+        el("strong", {}, p.display_name),
+        el(
+          "div",
+          { class: "muted small" },
+          p.tools.length
+            ? t("通过工具检索（{tools}）：能看到调用次数和耗时，没有分数和来源", { tools: p.tools.join("、") })
+            : t("发消息前放进请求的内容能看到次数、token 和耗时，没有分数和来源。同步到 AstrBot 知识库的算在内置知识库里"),
+        ),
+      ),
+    ),
+  );
+}
+
+const KB_VERDICT = {
+  ok: ["知识库正常", "ok"],
+  warn: ["知识库要留意", "warn"],
+  bad: ["知识库有问题", "bad"],
+  idle: ["知识库已配置，暂无检索记录", ""],
+  off: ["没有启用知识库", ""],
+};
+
+function kbReasonText(r) {
+  if (r.code === "missing") return t("知识库「{kb}」不存在", { kb: r.kb });
+  if (r.code === "init_error") return t("知识库「{kb}」初始化失败：{detail}", { kb: r.kb, detail: r.detail });
+  if (r.code === "empty") return t("知识库「{kb}」还没有内容", { kb: r.kb });
+  if (r.code === "errors") return t("近 24 小时有 {n} 次检索失败", { n: r.n });
+  if (r.code === "degraded") return t("近 24 小时有 {n} 次检索已降级（向量或重排失败）", { n: r.n });
+  if (r.code === "plugin_errors") return t("近 24 小时社区插件或 MCP 检索失败 {n} 次", { n: r.n });
+  return r.code;
+}
+
+// 近 24 小时的次数：AstrBot 知识库和社区插件分开说，免得和“查得到吗”里的次数对不上
+function kbRecentText(recent) {
+  const builtin = recent.builtin_total ?? recent.total;
+  const plugin = recent.total - builtin;
+  if (!plugin) return t("近 24 小时检索 {total} 次", { total: builtin });
+  return t("近 24 小时知识库检索 {total} 次、插件 {plugin} 次", { total: builtin, plugin });
+}
+
+function kbStatusBody(s, withLink) {
+  const [title] = KB_VERDICT[s.verdict] || KB_VERDICT.idle;
+  let detail = s.reasons.map(kbReasonText).join(" · ");
+  if (!detail && s.config.names.length) {
+    const mode = s.config.agentic ? t("模型调用工具") : t("发消息前自动注入");
+    detail = t("{n} 个知识库 · {mode} · {recent}", { n: s.config.names.length, mode, recent: kbRecentText(s.recent) });
+  }
+  if (!s.logging_enabled) detail = [detail, t("调用日志已关闭，只检查配置")].filter(Boolean).join(" · ");
+  const text = el("div", {}, el("strong", {}, t(title)), el("div", { class: "muted" }, detail));
+  if (withLink) {
+    const link = el("button", { type: "button", class: "link-btn go" }, t("查看知识库"));
+    link.addEventListener("click", () => showPage("kb"));
+    text.append(link);
+  }
+  return [el("span", { class: "dot" }), text];
+}
+
+// 开关：亮着表示开启。点了之后等接口返回再变，失败就恢复
+function switchEl(label, checked, onChange) {
+  const input = el("input", { type: "checkbox", role: "switch", "aria-label": label });
+  input.checked = checked;
+  input.addEventListener("change", async () => {
+    input.disabled = true;
+    try {
+      await onChange(input.checked);
+    } catch (err) {
+      input.checked = !input.checked;
+      toast(tr(err.message || String(err)), true);
+    } finally {
+      input.disabled = false;
+    }
+  });
+  return el("label", { class: "switch" }, input, el("span", { class: "switch-track" }));
+}
+
+function renderKbState(s) {
+  const mode = s.config.agentic ? t("模型调用工具") : t("发消息前自动注入");
+  $("kb-state-summary").textContent = t("已启用 {on} / {all} 个 · {mode} · {recent}", { on: s.config.names.length, all: s.config.all.length, mode, recent: kbRecentText(s.recent) });
+  const parts = [];
+  if (s.reasons.length) {
+    const cls = (KB_VERDICT[s.verdict] || KB_VERDICT.idle)[1];
+    parts.push(el("ul", { class: `kb-reasons ${cls}` }, ...s.reasons.map((r) => el("li", {}, kbReasonText(r)))));
+  }
+  if (!s.logging_enabled) parts.push(el("p", { class: "muted small" }, t("调用日志已关闭，只检查配置"), " ", settingLink("call_log_enabled", "去开启")));
+  if (s.config.all.length) {
+    parts.push(
+      el(
+        "div",
+        { class: "kb-switches" },
+        ...s.config.all.map((kb) =>
+          el(
+            "div",
+            { class: "kb-switch" },
+            switchEl(kb.name, kb.enabled, async (on) => {
+              const next = await bridge.apiPost("kb-toggle", { name: kb.name, enabled: on });
+              renderKbStatus(next);
+            }),
+            el("span", { class: "kb-switch-name", title: kb.name }, kb.name),
+            el("span", { class: "muted small" }, t("{n} 个文档", { n: kb.docs })),
+          ),
+        ),
+      ),
+      el("p", { class: "muted small" }, t("开关改的是默认配置文件，和 AstrBot 配置页选知识库是同一项，下一条消息生效。单独配置过知识库的会话不受影响。")),
+    );
+  } else {
+    parts.push(el("p", { class: "muted small" }, t("还没有知识库。可以在 AstrBot 的「知识库」页面创建。")));
+  }
+  $("kb-state").replaceChildren(...parts);
+}
+
+function renderKbStatus(s) {
+  lastKbStatus = s;
+  const cls = (KB_VERDICT[s.verdict] || KB_VERDICT.idle)[1];
+  const overview = $("kb-status");
+  overview.className = `banner ${cls}`;
+  overview.hidden = s.verdict === "off";
+  overview.replaceChildren(...kbStatusBody(s, true));
+  renderKbState(s);
+  renderKbPlugins(s);
+}
+
+async function loadKbStatus() {
+  renderKbStatus(await bridge.apiGet("kb-status"));
+}
+
+async function loadKbStats() {
+  const range = $("kb-range").value;
+  lastKbStats = await bridge.apiGet("kb-stats", range ? { range } : {});
+  renderKbPanel(lastKbStats);
+  renderKbTrim(lastKbStats);
+}
+
+const loadKb = () => Promise.all([loadKbStatus(), loadKbStats()]);
+const reloadKb = () => loadKb().catch((err) => toast(tr(err.message), true));
+
+// ---------- MCP ----------
+
+const MCP_STATE = {
+  connected: ["已连接", "ok"],
+  connecting: ["未连接", "warn"],
+  error: ["连接异常", "bad"],
+  disabled: ["已停用", ""],
+  removed: ["已移除", ""],
+};
+const MCP_KIND = { search: "搜索", read: "读取", write: "可写入", kb: "知识库" };
+
+const mcpOpenLists = new Set();
+
+async function toggleMcp(endpoint, name, active) {
+  await bridge.apiPost(endpoint, { name, active });
+  await loadMcp();
+}
+
+function mcpToolRow(tool) {
+  return el(
+    "div",
+    { class: "mcp-tool", title: tool.description },
+    switchEl(tool.name, tool.active, (on) => toggleMcp("mcp-tool-toggle", tool.name, on)),
+    el("code", { class: "mcp-tool-name" }, tool.name),
+    el("span", { class: "muted small" }, t(MCP_KIND[tool.kind] || tool.kind)),
+    el("span", { class: "muted small mcp-tool-num" }, `${t("{n} 次", { n: tool.calls })} · ${shortTokens(tool.schema_tokens)}`),
+  );
+}
+
+function renderMcpServer(server) {
+  const [label, cls] = MCP_STATE[server.state] || [server.state, ""];
+  const failRate = server.calls ? Math.round((server.errors / server.calls) * 100) : 0;
+  const writes = server.tools.filter((tool) => tool.kind === "write" && tool.active).length;
+  const head = el(
+    "div",
+    { class: "mcp-head" },
+    el("span", { class: `dot lamp-${cls}` }),
+    el("strong", {}, server.name),
+    el("span", { class: `badge ${cls}` }, t(label)),
+    server.transport ? el("span", { class: "muted small" }, server.transport) : "",
+    el("span", { class: "spacer" }),
+    server.state === "removed" ? "" : switchEl(server.name, server.state !== "disabled", (on) => toggleMcp("mcp-toggle", server.name, on)),
+  );
+  const facts = el(
+    "div",
+    { class: "mcp-facts" },
+    answerFact(I18N.getLang() === "en" ? "Tools" : "工具", server.tools.length, server.unused ? t("{n} 个没用过", { n: server.unused }) : ""),
+    answerFact(t("调用"), server.calls, server.calls ? t("失败 {n}%", { n: failRate }) : ""),
+    answerFact(t("平均耗时"), server.avg_ms ? `${(server.avg_ms / 1000).toFixed(1)}s` : "–", ""),
+    answerFact(t("工具说明占用"), `${shortTokens(server.schema_tokens)} token`, t("每次请求都带上（估算）")),
+  );
+  const box = el("div", { class: "mcp-server" }, head, facts);
+  if (writes) box.append(el("div", { class: "muted small" }, t("其中 {n} 个工具可能会修改外部数据", { n: writes })));
+  const used = server.tools.filter((tool) => tool.calls);
+  if (used.length) {
+    box.append(
+      hbarList(
+        used.slice(0, 5).map((tool) => ({
+          label: tool.name,
+          value: tool.calls,
+          text: t("{n} 次", { n: tool.calls }),
+          hint: tool.description || tool.name,
+        })),
+      ),
+    );
+  }
+  if (server.errors_log.length) box.append(el("details", {}, el("summary", { class: "muted small" }, t("最近的错误输出")), pre(server.errors_log.join("\n"))));
+  const open = el("button", { type: "button", class: "link-btn go" }, t("查看调用记录"));
+  open.addEventListener("click", () => openCalls("mcp", `mcp:${server.name}`));
+  const list = el(
+    "details",
+    {},
+    el("summary", { class: "muted small" }, t("全部工具（{n}）", { n: server.tools.length })),
+    el("p", { class: "muted small" }, t("每行是开关、工具名、类型、调用次数和说明占用的 token。关掉不用的工具，每次请求能少带它的说明。")),
+    el("div", { class: "mcp-tools" }, ...server.tools.map(mcpToolRow)),
+  );
+  list.open = mcpOpenLists.has(server.name);
+  list.addEventListener("toggle", () => (list.open ? mcpOpenLists.add(server.name) : mcpOpenLists.delete(server.name)));
+  box.append(el("div", { class: "mcp-foot" }, open), list);
+  return box;
+}
+
+function answerFact(label, value, hint) {
+  return el("div", { class: "mcp-fact" }, el("div", { class: "muted small" }, label), el("strong", {}, String(value)), hint ? el("div", { class: "muted small" }, hint) : "");
+}
+
+function renderMcp(data) {
+  lastMcp = data;
+  const servers = data.servers;
+  const connected = servers.filter((server) => server.state === "connected").length;
+  const tokens = servers.reduce((sum, server) => sum + server.schema_tokens, 0);
+  $("mcp-summary").textContent = servers.length ? t("{n} 个服务，{connected} 个已连接 · 工具说明每次请求约占 {tokens} token", { n: servers.length, connected, tokens: shortTokens(tokens) }) : "";
+  $("mcp-list").replaceChildren(...(servers.length ? servers.map(renderMcpServer) : [el("p", { class: "muted small" }, t("还没有配置 MCP 服务。可以在 AstrBot 的「MCP」页面添加。"))]));
+}
+
+const MCP_VERDICT = {
+  ok: ["MCP 正常", "ok"],
+  warn: ["MCP 要留意", "warn"],
+  bad: ["MCP 有问题", "bad"],
+};
+
+function mcpReasonText(r) {
+  if (r.code === "down") return t("{servers} 没有连上", { servers: r.servers.join("、") });
+  if (r.code === "failing") return t("{server} 的调用大多失败（{n} 次）", { server: r.server, n: r.n });
+  return r.code;
+}
+
+function renderMcpStatus(s) {
+  lastMcpStatus = s;
+  const box = $("mcp-status");
+  box.hidden = s.verdict === "off";
+  if (box.hidden) return;
+  const [title, cls] = MCP_VERDICT[s.verdict];
+  box.className = `banner ${cls}`;
+  const detail = s.reasons.map(mcpReasonText).join(" · ") || t("{connected} 个服务已连接 · 近 24 小时调用 {calls} 次", { connected: s.connected, calls: s.calls });
+  const link = el("button", { type: "button", class: "link-btn go" }, t("查看 MCP"));
+  link.addEventListener("click", () => showPage("mcp"));
+  box.replaceChildren(el("span", { class: "dot" }), el("div", {}, el("strong", {}, t(title)), el("div", { class: "muted" }, detail), link));
+}
+
+async function loadMcp() {
+  const range = $("mcp-range").value;
+  renderMcp(await bridge.apiGet("mcp", range ? { range } : {}));
+}
+
+// ---------- 嵌入和重排的花费 ----------
+
+const PRICE_SOURCE = {
+  manual: ["手动填写", "accent"],
+  local: ["本地模型，免费", "ok"],
+  official: ["官方价", ""],
+  reference: ["参考价", "warn"],
+};
+
+function kbCostRows(cost, unbilled = 0) {
+  return el(
+    "div",
+    { class: "model-cost-list" },
+    ...cost.rows.map((row) => {
+      const [label, cls] = row.price ? PRICE_SOURCE[row.price.source] || [row.price.source, ""] : ["没有价格", "bad"];
+      const edit = el("button", { type: "button", class: "link-btn" }, t(row.price ? "改价格" : "填价格"));
+      const line = el(
+        "div",
+        { class: "model-cost" },
+        el(
+          "div",
+          { class: "model-cost-head" },
+          el("span", { class: "muted small" }, t(row.kind === "embedding" ? "嵌入模型" : "重排模型")),
+          el("strong", {}, row.model),
+          el("span", { class: `badge ${cls}` }, t(label)),
+          el("span", { class: "muted small" }, !row.tokens && unbilled ? t("没有用量记录") : t("约 {n} token（估算）", { n: shortTokens(row.tokens) })),
+          el("span", { class: "spacer" }),
+          el("strong", {}, row.cost_cny == null || (!row.tokens && unbilled) ? "–" : yuan(row.cost_cny)),
+          edit,
+        ),
+      );
+      const editLabel = edit.textContent;
+      edit.addEventListener("click", () => {
+        const form = line.querySelector("form");
+        if (form) form.remove();
+        else line.append(priceForm(row));
+        edit.textContent = form ? editLabel : t("收起");
+      });
+      return line;
+    }),
+  );
+}
+
+function priceForm(row) {
+  const price = row.price || {};
+  const value = el("input", { type: "number", name: "price", min: "0", step: "any", value: price.source === "local" ? 0 : (price.input ?? 0), "aria-label": t("每百万 token 的价格") });
+  const currency = el("select", { name: "currency", class: "inline-select", "aria-label": t("币种") }, el("option", { value: "cny" }, "CNY"), el("option", { value: "usd" }, "USD"));
+  currency.value = price.currency === "usd" ? "usd" : "cny";
+  const form = el("form", { class: "price-form" }, el("label", {}, t("每百万 token 的价格"), value), el("label", {}, t("币种"), currency), el("button", { type: "submit", class: "btn small-btn" }, t("保存")));
+  const prefix = `${row.model.toLowerCase()} =`;
+  const manual = lastKbStats?.manual_prices || [];
+  const others = manual.filter((rule) => !rule.toLowerCase().startsWith(prefix));
+  if (others.length !== manual.length) {
+    const reset = el("button", { type: "button", class: "btn ghost small-btn" }, t("恢复自动价格"));
+    reset.addEventListener("click", () => saveManualPrices(others));
+    form.append(reset);
+  }
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    saveManualPrices([...others, `${row.model} = ${Number(value.value) || 0} ${currency.value}`]);
+  });
+  return form;
+}
+
+async function saveManualPrices(lines) {
+  try {
+    await bridge.apiPost("settings", { model_prices: lines });
+    await loadKbStats();
+    toast(t("已保存"));
+  } catch (err) {
+    toast(tr(err.message), true);
+  }
+}
+
 
 function renderCalls(items) {
   const body = $("calls-body");
@@ -988,7 +1749,7 @@ function renderCalls(items) {
       "tr",
       { class: "row-main", tabindex: "0", "aria-expanded": "false" },
       el("td", { class: "num" }, new Date(it.ts * 1000).toLocaleString([], { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })),
-      el("td", {}, el("code", {}, it.tool)),
+      el("td", {}, el("code", {}, toolLabel(it.tool))),
       el("td", {}, el("span", { class: "src" }, sourceLabel(it.source))),
       el("td", {}, el("span", { class: `badge ${cls}` }, t(label) + status)),
       el("td", { class: "num" }, it.duration_ms !== null && it.duration_ms !== undefined ? `${it.duration_ms} ms` : "–"),
@@ -1041,11 +1802,52 @@ function renderCallsPage(data) {
   $("btn-next").disabled = callPage + 1 >= pages;
   const s = data.summary;
   const oldest = s.oldest_ts ? new Date(s.oldest_ts * 1000).toLocaleDateString() : "–";
-  $("calls-summary").textContent = t("所有工具的调用记录 · 已保存 {total} 条（最早 {oldest}），保留 {days} 天 · 点击一行查看详情", { total: s.total, oldest, days: s.retention_days });
+  $("calls-summary").replaceChildren(t("所有工具的调用记录 · 已保存 {total} 条（最早 {oldest}），保留 {days} 天 · 点击一行查看详情", { total: s.total, oldest, days: s.retention_days }), " ", settingLink("call_log_retention_days", "改保留天数"));
 }
 
 async function loadCalls() {
-  renderCallsPage(await bridge.apiGet("calls", { ...currentCallFilters(), limit: PAGE_SIZE, offset: callPage * PAGE_SIZE }));
+  const { range } = currentCallFilters();
+  const [data, categories] = await Promise.all([bridge.apiGet("calls", { ...currentCallFilters(), limit: PAGE_SIZE, offset: callPage * PAGE_SIZE }), bridge.apiGet("call-categories", range ? { range } : {})]);
+  renderCallsPage(data);
+  renderCategories(categories);
+}
+
+const CALL_CATEGORY_LABELS = [
+  ["", "全部", "all"],
+  ["search", "联网搜索", "search"],
+  ["kb", "知识库", "kb"],
+  ["mcp", "MCP", "mcp"],
+  ["plugin", "其他插件", "plugin"],
+  ["builtin", "内置工具", "builtin"],
+];
+
+function renderCategories(counts) {
+  lastCategories = counts;
+  $("call-cats").replaceChildren(
+    ...CALL_CATEGORY_LABELS.map(([value, label, key]) => {
+      const button = el("button", { type: "button", class: "cat", "aria-pressed": String(callCategory === value) }, t(label), el("span", { class: "cat-count" }, String(counts[key] ?? 0)));
+      button.addEventListener("click", () => {
+        callCategory = value;
+        callPage = 0;
+        resetCallsFold();
+        reloadCalls();
+      });
+      return button;
+    }),
+  );
+}
+
+// 从知识库页、MCP 页跳到调用日志，带上分类和服务
+async function openCalls(category, source = "") {
+  callCategory = category;
+  callPage = 0;
+  resetCallsFold();
+  // 这些记录不一定在默认的 24 小时内
+  callFilters.elements.range.value = "14d";
+  await showPage("calls");
+  await loadFacets().catch(() => {});
+  callFilters.elements.source.value = source;
+  reloadCalls();
 }
 
 function renderFacets(f) {
@@ -1053,7 +1855,7 @@ function renderFacets(f) {
   const fill = (name, values, label) => {
     const select = callFilters.elements[name];
     const current = select.value;
-    select.replaceChildren(el("option", { value: "" }, t(label)), ...values.map((v) => el("option", { value: v }, name === "source" ? sourceLabel(v) : v)));
+    select.replaceChildren(el("option", { value: "" }, t(label)), ...values.map((v) => el("option", { value: v }, name === "source" ? sourceLabel(v) : name === "tool" ? toolLabel(v) : v)));
     select.value = values.includes(current) ? current : "";
   };
   fill("source", f.sources, "全部来源");
@@ -1078,6 +1880,19 @@ for (const name of ["range", "source", "tool", "status"]) {
     reloadCalls();
   });
 }
+$("kb-range").addEventListener("change", reloadKb);
+$("mcp-range").addEventListener("change", () => loadMcp().catch((err) => toast(tr(err.message), true)));
+$("kb-trim-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.currentTarget.elements;
+  const saved = $("kb-trim-saved");
+  try {
+    await bridge.apiPost("settings", { kb_trim_chunk_chars: Number(f.kb_trim_chunk_chars.value) || 0, kb_trim_min_score: Number(f.kb_trim_min_score.value) || 0 });
+    saved.textContent = t("已保存");
+  } catch (err) {
+    saved.textContent = tr(err.message);
+  }
+});
 $("btn-prev").addEventListener("click", () => {
   callPage = Math.max(0, callPage - 1);
   reloadCalls();
@@ -1111,7 +1926,7 @@ clearBtn.addEventListener("click", (e) => {
   withBusy(e.currentTarget, async () => {
     const r = await bridge.apiPost("call-clear", {});
     callPage = 0;
-    await Promise.allSettled([loadCalls(), loadFacets()]);
+    await Promise.allSettled([loadCalls(), loadFacets(), ...(loaded.has("kb") ? [loadKb()] : [])]);
     toast(t("已清空 {n} 条调用日志", { n: r.removed }));
   });
 });
@@ -1136,7 +1951,7 @@ function renderSearchStats(data, health = lastOverview?.health || {}) {
   const body = $("stats-body");
   body.replaceChildren();
   if (!data.rows.length) {
-    body.append(emptyRow(10, data.logging_enabled ? t("这段时间没有搜索类工具的调用") : t("调用日志已关闭，无法统计")));
+    body.append(emptyRow(10, data.logging_enabled ? t("这段时间没有搜索类工具的调用") : el("span", {}, t("调用日志已关闭，无法统计"), " ", settingLink("call_log_enabled", "去开启"))));
   }
   const rows = [];
   for (const r of data.rows) {
@@ -1252,7 +2067,7 @@ async function overviewAction(endpoint, body, okText) {
   const failed = Object.entries(data.failed || {});
   if (failed.length) toast(failed.map(([name, why]) => `${name}：${tr(why)}`).join("；"), true);
   else toast(okText);
-  if (loaded.has("tools")) loadTools().catch(() => {});
+  if (loaded.has("settings")) loadTools().catch(() => {});
   if (loaded.has("usage")) loadSearchStats().catch(() => {});
 }
 
@@ -1369,9 +2184,8 @@ function signupLine(url) {
 }
 
 async function reloadAfterKey() {
-  loaded.delete("tools");
   const tasks = [loadStatus(), loadOverview()];
-  if (currentPage === "settings" || lastCatalog) tasks.push(loadSearchTools());
+  if (loaded.has("settings")) tasks.push(loadTools(), loadSearchTools());
   await Promise.allSettled(tasks);
 }
 
@@ -1448,7 +2262,7 @@ function renderLanes(data) {
         { class: "lane-head" },
         el("i", { class: `hdot ${item.lamp}` }),
         el("div", { class: "lane-plain" }, el("strong", {}, tr(lane.plain)), el("span", { class: "muted" }, " → "), serviceLogo(item), el("strong", {}, tr(item.label))),
-        el("span", { class: `lane-state small lamp-${item.lamp}` }, t(LAMP_TEXT[item.lamp])),
+        item.lamp === "ok" ? null : el("span", { class: `lane-state small lamp-${item.lamp}` }, t(LAMP_TEXT[item.lamp])),
       ),
       el("div", { class: "muted small" }, callsText(item.calls)),
     );
@@ -1470,7 +2284,7 @@ function renderLanes(data) {
         { class: "lane-head" },
         special.length ? el("i", { class: `hdot ${worst}` }) : null,
         el("div", { class: "lane-plain" }, el("strong", {}, t("专用搜索"))),
-        special.length ? el("span", { class: `lane-state small lamp-${worst}` }, t(LAMP_TEXT[worst])) : null,
+        special.length && worst !== "ok" ? el("span", { class: `lane-state small lamp-${worst}` }, t(LAMP_TEXT[worst])) : null,
       ),
     );
     const rows = el("div", { class: "spec-rows" });
@@ -1485,13 +2299,13 @@ function renderLanes(data) {
     );
     card.append(rows);
     const missing = missingLine(data.missing_categories);
-    if (missing) card.append(el("p", { class: "muted small" }, missing));
+    if (missing) card.append(el("p", { class: "muted small" }, missing, " ", settingLink("specialist_rules", "去添加")));
     if (special.length) card.append(toolNames(special));
     box.append(card);
   }
   const capped = Object.entries(data.capped || {});
   if (capped.length) {
-    box.append(el("p", { class: "muted small" }, t("本月已达调用上限、暂不提供：{list}", { list: joinList(capped.map(([name, c]) => `${name}（${c.used} / ${c.limit}）`)) })));
+    box.append(el("p", { class: "muted small" }, t("本月已达调用上限、暂不提供：{list}", { list: joinList(capped.map(([name, c]) => `${name}（${c.used} / ${c.limit}）`)) }), " ", settingLink("tool_monthly_limits", "改调用上限")));
   }
   const flagged = Object.entries(data.health).filter(([, h]) => (h.verdict === "broken" || h.verdict === "degraded") && !h.ignored);
   const alert = $("health-alert");
@@ -1585,6 +2399,16 @@ function renderHandled(data) {
 
 async function loadOverview() {
   renderLanes(await bridge.apiGet("overview", { range: "24h" }));
+  bridge
+    .apiGet("usage", { days: 14 })
+    .then((data) => renderTrend(data.days))
+    .catch(() => {});
+  // 知识库和 MCP 的状态只是附加信息，取不到不影响概览
+  loadKbStatus().catch(() => {});
+  bridge
+    .apiGet("mcp", { range: "24h" })
+    .then((data) => renderMcpStatus(data.status))
+    .catch(() => {});
 }
 
 // ---------- 网络连通性 ----------
@@ -1622,6 +2446,8 @@ function renderNetwork(data) {
       probe = check ? el("span", { class: `badge ${check.server_foreign_ok ? "ok" : "warn"}` }, check.server_foreign_ok ? t("服务器能访问国外") : t("服务器访问不了国外")) : el("span", { class: "muted small" }, t("未检测"));
     } else if (g.kind === "local") {
       probe = el("span", { class: "muted small" }, t("不联网"));
+    } else if (!g.endpoint && g.kind === "unknown") {
+      probe = el("span", { class: "muted small" }, t("没法单独检测"));
     } else {
       probe = check ? probeCell(ep) : el("span", { class: "muted small" }, t("未检测"));
     }
@@ -1719,9 +2545,9 @@ async function savePref() {
     if (prefPreset === "custom") body.search_order = prefLines();
     renderStatus(await bridge.apiPost("settings", body));
     setPrefState(t("已保存 · {time}", { time: new Date().toLocaleTimeString() }), "ok-text");
-    // 分工变了：概览马上刷新，工具页打开时再刷新
-    loaded.delete("tools");
+    // 分工变了：状态和“出问题时会怎样”都要跟着变
     loadOverview().catch(() => {});
+    loadTools(formDirty).catch(() => {});
   } catch (err) {
     setPrefState(t("保存失败：{error}", { error: tr(err?.message || String(err)) }), "bad-text");
   }
@@ -1809,7 +2635,7 @@ function renderPref() {
     if (on.length === 1) return t("{scene}：{first}", { scene: tr(label), first: on[0] });
     return t("{scene}：优先 {first}；不理想时再用 {rest}", { scene: tr(label), first: on[0], rest: on.slice(1, 4).join(sep) });
   });
-  $("pref-preview").textContent = `${t("模型会收到的分工说明")}\n${preview.join("\n")}`;
+  $("pref-preview").textContent = preview.join("\n");
   $("pref-note").textContent = [prefData.mode_note ? tr(prefData.mode_note) : "", t("改动后，下一次对话的提示词缓存会失效一次。")].filter(Boolean).join(" ");
 }
 
@@ -1844,7 +2670,7 @@ function keyBox(e) {
   // 不走表单的自动保存
   for (const type of ["input", "change"]) input.addEventListener(type, (ev) => ev.stopPropagation());
   const result = el("span", { class: "small", role: "status" });
-  const save = el("button", { type: "button", class: "btn" }, t("保存"));
+  const save = el("button", { type: "button", class: "btn small-btn" }, t("保存"));
   const onError = (err) => toast(tr(err?.message || String(err)), true);
   save.addEventListener("click", (ev) => withBusy(ev.currentTarget, () => saveKey(k.service, input).catch(onError)));
   input.addEventListener("keydown", (ev) => {
@@ -1852,7 +2678,7 @@ function keyBox(e) {
     ev.preventDefault();
     save.click();
   });
-  const test = el("button", { type: "button", class: "btn ghost" }, t("测试"));
+  const test = el("button", { type: "button", class: "btn ghost small-btn" }, t("测试"));
   test.addEventListener("click", (ev) =>
     withBusy(ev.currentTarget, () =>
       testService(k.service, (text, bad) => {
@@ -1945,8 +2771,46 @@ const CATALOG_FILTERS = [
 ];
 let catalogFilter = "all";
 
+// 每个已识别的服务一行，填次数就行。DeepSeek 按费用控制，知识库不是付费搜索，都不在这里
+function renderCapRows(list) {
+  const box = $("cap-rows");
+  if (box.contains(document.activeElement)) return;
+  const rows = list.filter((e) => e.cap && CATALOG_IN_USE.has(e.status) && !["deepseek", "kb"].includes(e.key));
+  if (!rows.length) {
+    box.replaceChildren(el("p", { class: "muted small" }, t("还没有识别到其他搜索服务。")));
+    return;
+  }
+  const limitLines = () => lines(form.tool_monthly_limits.value);
+  box.replaceChildren(
+    ...rows.map((e) => {
+      const isTavily = e.key === "tavily" && e.tools.includes("deepdeep_tavily_search");
+      const used = isTavily ? lastStatus?.tavily?.month_used ?? e.cap.used : e.cap.used;
+      const input = el("input", { type: "number", min: "0", max: "10000000", step: "1", "aria-label": `${tr(e.name)} ${t("每月调用上限")}` });
+      input.value = isTavily ? form.tavily_monthly_limit.value || 0 : e.cap.limit;
+      // 先写回表单字段，事件再冒泡到表单触发自动保存
+      input.addEventListener("input", () => {
+        const value = Math.max(0, Math.floor(Number(input.value) || 0));
+        if (isTavily) {
+          form.tavily_monthly_limit.value = value;
+          return;
+        }
+        const kept = limitLines().filter((line) => line.split("=")[0].trim() !== e.cap.pattern);
+        form.tool_monthly_limits.value = [...kept, ...(value ? [`${e.cap.pattern} = ${value}`] : [])].join("\n");
+      });
+      return el(
+        "label",
+        { class: "cap-row", title: e.tools.join("\n") },
+        el("span", { class: "cap-name" }, tr(e.name)),
+        el("span", { class: "muted small" }, t("本月 {n} 次", { n: used })),
+        input,
+      );
+    }),
+  );
+}
+
 function renderCatalog(list) {
   lastCatalog = list;
+  renderCapRows(list);
   prefChips(
     $("catalog-filters"),
     CATALOG_FILTERS.map(([key, label, pass]) => [key, `${t(label)} ${list.filter(pass).length}`]),
@@ -1986,7 +2850,10 @@ async function loadUsage() {
 let resizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => usageDays.length && renderChart(usageDays), 150);
+  resizeTimer = setTimeout(() => {
+    if (usageDays.length) renderChart(usageDays);
+    if (trendDays.length) renderTrend(trendDays);
+  }, 150);
 });
 
 async function loadTools(preview = false) {
@@ -2007,8 +2874,10 @@ const PAGE_LOADERS = {
   overview: () => [loadOverview()],
   usage: () => [loadUsage(), loadSearchStats()],
   calls: () => [loadCalls(), loadFacets()],
-  settings: () => [loadSearchTools()],
-  tools: () => [loadTools(formDirty), loadNetwork()],
+  kb: () => [loadKb()],
+  mcp: () => [loadMcp()],
+  settings: () => [loadSearchTools(), loadTools(formDirty)],
+  tools: () => [loadNetwork()],
 };
 const loaded = new Set();
 const tabs = [...document.querySelectorAll("#navbar [data-page]")];
@@ -2035,6 +2904,7 @@ async function showPage(name) {
   const left = cur.getBoundingClientRect().left - nav.getBoundingClientRect().left + nav.scrollLeft;
   if (left < nav.scrollLeft || left + cur.offsetWidth > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = left - 16;
   if (name === "usage" && usageDays.length) renderChart(usageDays);
+  if (name === "overview" && trendDays.length) renderTrend(trendDays);
   if (!loaded.has(name)) {
     loaded.add(name);
     reportFailures(await Promise.allSettled(PAGE_LOADERS[name]()));
@@ -2042,6 +2912,7 @@ async function showPage(name) {
 }
 
 for (const b of tabs) b.addEventListener("click", () => showPage(b.dataset.page));
+
 
 async function refreshAll() {
   // 其他页面下次打开时再重新加载
@@ -2103,13 +2974,8 @@ async function saveNow() {
       String(before.search_lane_rules) !== String(st.search_lane_rules);
     if (routingChanged) loadSearchTools().catch(() => {});
     if (routingChanged) {
-      // 概览马上刷新；工具和网络页打开时再刷新
-      loaded.delete("tools");
       const tasks = [loadOverview()];
-      if (currentPage === "tools") {
-        loaded.add("tools");
-        tasks.push(...PAGE_LOADERS.tools());
-      }
+      if (loaded.has("settings")) tasks.push(loadTools(formDirty));
       await Promise.allSettled(tasks);
     }
   } catch (err) {
@@ -2119,14 +2985,17 @@ async function saveNow() {
 }
 
 form.addEventListener("submit", (e) => e.preventDefault());
+// “出问题时会怎样”里的选项只影响显示，不算设置
+const isSettingField = (target) => !target.closest("[data-no-save]");
 form.addEventListener("change", (e) => {
-  updateBudgetHints();
-  updateModeHint();
   const target = e.target;
-  if (target.matches("select, input[type=checkbox]")) scheduleSave(0);
+  if (!isSettingField(target)) return;
+  updateBudgetHints();
+  if (target.matches("select, input[type=checkbox], input[type=radio]")) scheduleSave(0);
   else scheduleSave(600);
 });
 form.addEventListener("input", (e) => {
+  if (!isSettingField(e.target)) return;
   updateBudgetHints();
   if (e.target.matches("textarea, input[type=number]")) scheduleSave(1200);
 });
@@ -2173,11 +3042,21 @@ for (const a of document.querySelectorAll("a.head-link")) {
     hint.hidden = false;
   });
 }
+function diagPrompt() {
+  return [
+    t("下面是 AstrBot 插件 DeepDeep 的诊断信息。请帮我："),
+    t("1. 找出异常的项目（verdict 不是 ok、status 是 missing 或 warn、recent_problems 里的失败），按影响大小排序，并说明原因。"),
+    t("2. 能通过改设置解决的，告诉我具体操作。入口是 AstrBot 插件页里 DeepDeep 的面板，分为概览、搜索用量、知识库监控、MCP监控、调用日志、设置、诊断。知识库和 MCP 服务本身在 AstrBot 的同名页面配置。"),
+    t("3. 判断不了的不要猜，告诉我还需要什么信息。"),
+    t("4. 如果像是插件本身的 bug，帮我写一份 Issue，提交到 https://github.com/liquidtoy001/astrbot_plugin_deepdeep/issues 。说明文档在仓库的 docs/GUIDE.md。"),
+    t("不要让我发送 API Key。这里只有状态，没有插件代码，不要假装已经修好了。"),
+  ].join("\n");
+}
 $("btn-diag").addEventListener("click", (e) =>
   withBusy(e.currentTarget, async () => {
     const data = await bridge.apiGet("diagnostics");
     const box = $("diag");
-    box.value = JSON.stringify(data, null, 2);
+    box.value = `${diagPrompt()}\n\n\`\`\`json\n${JSON.stringify(data, null, 2)}\n\`\`\``;
     box.hidden = false;
     $("btn-diag-copy").hidden = false;
   }),
@@ -2213,16 +3092,10 @@ $("btn-reset").addEventListener("click", (e) =>
     toast(t("已解除暂停"));
   }),
 );
-$("btn-test").addEventListener("click", (e) =>
-  withBusy(e.currentTarget, async () => {
-    const r = await bridge.apiPost("test", {});
-    toast(r.ok ? `${tr(r.message)}${r.first_result ? `：${r.first_result}` : ""}` : t("连接失败：{error}", { error: tr(r.message) }), !r.ok);
-    const tasks = [loadStatus()];
-    if (loaded.has("calls")) tasks.push(loadCalls());
-    if (loaded.has("usage")) tasks.push(loadUsage());
-    await Promise.allSettled(tasks);
-  }),
-);
+document.addEventListener("click", (e) => {
+  const link = e.target.closest?.("[data-setting]");
+  if (link) goToSetting(link.dataset.setting);
+});
 
 // ---------- 启动 ----------
 
@@ -2245,6 +3118,9 @@ setInterval(() => {
   const tasks = [loadStatus()];
   if (currentPage === "overview") tasks.push(loadOverview());
   // 调用日志只在第一页且没有展开详情时自动刷新，免得打断查看
-  if (currentPage === "calls" && callPage === 0 && !document.querySelector("tr.row-main.open")) tasks.push(loadCalls());
+  const reading = document.querySelector(".view:not([hidden]) tr.row-main.open");
+  if (currentPage === "calls" && callPage === 0 && !reading) tasks.push(loadCalls());
+  // 正在填价格或看详细指标时不刷新，否则会被收起来
+  if (currentPage === "kb" && !document.querySelector(".price-form, .kb-detail[open]")) tasks.push(loadKb());
   Promise.allSettled(tasks);
 }, 30000);

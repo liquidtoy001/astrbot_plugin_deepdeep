@@ -147,7 +147,7 @@ def test_tavily_key_failure_is_a_warning_with_fix():
         {**base, "last_failure": {"status": 432, "label": "额度用完"}}
     )
     assert quota["key"] == "tavily:http_432" and "额度用完" in quota["detail"]
-    assert "下个月" in quota["fix"] and "Tavily 每月调用上限" in quota["fix"]
+    assert "下个月" in quota["fix"] and "花费和上限" in quota["fix"]
     result = sc.build(
         deepseek=sc.check_deepseek(("k", "s"), True),
         tavily=quota,

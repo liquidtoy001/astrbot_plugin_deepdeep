@@ -10,7 +10,7 @@ from test_plugin import (
 from core.route_view import ToolStatus, arrange, category_of
 from core.router import ToolRouter
 
-OWN = ["deepdeep_web_search", "deepdeep_web_fetch"]
+OWN = ["deepdeep_deepseek_search", "deepdeep_deepseek_fetch"]
 SPECIAL = [
     "image_search_serpapi",
     "searxng_web_search_videos",
@@ -60,7 +60,7 @@ def test_news_row_shares_the_general_first_choice():
     rows, missing = rows_for(names)
     assert "新闻时事" not in missing
     news = rows["cat:news"]
-    assert news["names"] == ["deepdeep_web_search", "searxng_web_search_news"]
+    assert news["names"] == ["deepdeep_deepseek_search", "searxng_web_search_news"]
     assert "searxng_web_search_news" not in rows["search"]["names"]
     # 路由的数据不变
     assert "searxng_web_search_news" in rows["search"]["backups"]
@@ -141,7 +141,7 @@ async def test_usage_counts_other_tools_without_double_counting(plugin_module): 
         ("web_search_bocha", "error"),
         ("web_search_bocha", "blocked"),  # 被拦下的不算
         ("searxng_web_fetch_url", "ok"),
-        ("deepdeep_web_search", "ok"),  # 用 DeepSeek 自己的计费统计，不重复算
+        ("deepdeep_deepseek_search", "ok"),  # 用 DeepSeek 自己的计费统计，不重复算
         ("astr_kb_search", "ok"),  # 不算联网搜索
         ("set_user_nickname", "ok"),  # 不是搜索工具
     ):

@@ -150,6 +150,8 @@ class TavilyClient:
                     ) as resp:
                         if resp.status == 200:
                             data = await resp.json(content_type=None)
+                            if not isinstance(data, dict):
+                                raise ValueError("not an object")
                             self.key_failures.pop(key_id(key), None)
                             return [
                                 _parse(x)
@@ -166,6 +168,8 @@ class TavilyClient:
                     last = TavilyError(0, "Tavily 请求超时")
                 except aiohttp.ClientError as exc:
                     last = TavilyError(0, f"无法连接 Tavily（{type(exc).__name__}）")
+                except ValueError:
+                    last = TavilyError(0, "Tavily 返回的内容无法解析")
                 # Key 无效或额度用完：记下来，换下一个 Key；限流、超时、服务端错误：同一个 Key 再试一次
                 if last.status in KEY_FAILURES:
                     self.key_failures[key_id(key)] = {
@@ -251,12 +255,17 @@ class TavilySearch:
         # 本月成功的计费调用次数（HTTP 200，含无结果；缓存命中不算）
         self.usage = usage if usage is not None else MonthlyCounter(None)
         self.monthly_limit = 0  # 0 表示不限制
+        # 已经发出、还没出结果的请求：同时发出的请求也不能一起越过上限
+        self._in_flight = 0
 
     def month_used(self) -> int:
         return self.usage.count()
 
     def limit_reached(self) -> bool:
-        return self.monthly_limit > 0 and self.month_used() >= self.monthly_limit
+        return (
+            self.monthly_limit > 0
+            and self.month_used() + self._in_flight >= self.monthly_limit
+        )
 
     def usage_text(self) -> str:
         used = self.month_used()
@@ -340,8 +349,10 @@ class TavilySearch:
                 rid,
             )
         started = time.monotonic()
+        self._in_flight += 1
         try:
             results = await self.client.search(query, n, keys)
+            self.usage.add()
         except TavilyError as exc:
             head = f"[Tavily 搜索 #{rid}] 失败 · " + (
                 f"HTTP {exc.status}" if exc.status else "网络错误"
@@ -352,8 +363,9 @@ class TavilySearch:
                 f"http_{exc.status}" if exc.status else "network",
                 rid,
             )
+        finally:
+            self._in_flight -= 1
         ms = int((time.monotonic() - started) * 1000)
-        self.usage.add()
         if results:
             self.cache.set(key, results)
         text = f"[Tavily 搜索 #{rid}] 成功 · {len(results)} 条结果 · {ms} ms\n{format_results(query, results, self.max_chars)}"

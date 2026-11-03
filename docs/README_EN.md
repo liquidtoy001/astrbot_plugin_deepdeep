@@ -6,7 +6,7 @@
 
 [简体中文](../README.md) | **English**
 
-**Manage AstrBot's built-in web search and community search plugins in one place: pick the right tool, switch when one fails, and stop paid search at your spending cap.**
+**Manage and monitor AstrBot's web search and knowledge bases (built-in and community plugins) and MCP in one place: picks the right search tool, switches when one fails, stops paid search at your spending cap, and helps you improve search quality and see what it costs.**
 
 [![Release](https://img.shields.io/github/v/release/liquidtoy001/astrbot_plugin_deepdeep?style=flat-square&color=4D6BFE)](https://github.com/liquidtoy001/astrbot_plugin_deepdeep/releases/latest) ![AstrBot](https://img.shields.io/badge/AstrBot-%E2%89%A54.26.0-2563EB?style=flat-square) [![CI](https://img.shields.io/github/actions/workflow/status/liquidtoy001/astrbot_plugin_deepdeep/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/liquidtoy001/astrbot_plugin_deepdeep/actions/workflows/ci.yml) [![Compatibility](https://img.shields.io/github/actions/workflow/status/liquidtoy001/astrbot_plugin_deepdeep/compat.yml?branch=main&style=flat-square&label=compatibility)](https://github.com/liquidtoy001/astrbot_plugin_deepdeep/actions/workflows/compat.yml) ![License](https://img.shields.io/badge/license-MIT-22A06B?style=flat-square)
 
@@ -121,20 +121,36 @@ The defaults come from tests, not guesses. These are the author's tests from Oct
 
 | Page | What it's for |
 |---|---|
-| Overview | Whether search works, this month's spending, today's usage, which service handles each kind of question |
-| Usage | Spending share and calls per service |
+| Overview | Whether search, knowledge bases and MCP are working, what needs attention, this month's spending, the search trend, and which service handles each kind of question |
+| Search usage | Searches over 30 days, spending and call counts for each service, and how much of each call cap is used |
+| KB monitor | See whether retrieval finds things, what embedding and rerank cost, whether results help, and how to improve it |
+| MCP monitor | Status and usage of each MCP server, and the tokens its tool descriptions take up |
 | Call log | View, filter and export every tool call, with the top result shown |
-| Settings | Monthly spending cap, preference (recommended, save money, Chinese first), API keys |
-| Tools & diagnostics | Generate diagnostics, check the network, see which tools each kind of question uses |
+| Settings | Monthly spending cap, preference (recommended / cheaper / Chinese first), what happens when something fails, API keys |
+| Diagnostics | Generate diagnostic information and check the network |
 
 For everyday use you only need Overview and Settings. Settings save automatically, and the harder options are under Advanced, where you can leave them alone.
 
-<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/overview_en.png" alt="Overview page: search status, this month's spending, today's usage and main search tools" />
+<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/overview_en.png" alt="Overview page: service status, this month's spending, search trend and main search tools" />
 
 <details>
-<summary>Usage page screenshot</summary>
+<summary>Search usage page screenshot</summary>
 
-<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/usage_en.png" alt="Usage page: searches over 30 days, spending share per service and usage per tool" />
+<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/usage_en.png" alt="Search usage page: searches over 30 days, spending per service and usage per tool" />
+
+</details>
+
+<details>
+<summary>KB monitor page screenshot</summary>
+
+<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/kb_en.png" alt="KB monitor page: whether retrieval finds things, embedding and rerank cost, knowledge base switches" />
+
+</details>
+
+<details>
+<summary>MCP monitor page screenshot</summary>
+
+<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/mcp_en.png" alt="MCP monitor page: status, calls, tool switches and the tokens tool descriptions take for each MCP server" />
 
 </details>
 
@@ -153,9 +169,9 @@ For everyday use you only need Overview and Settings. Settings save automaticall
 </details>
 
 <details>
-<summary>Tools &amp; diagnostics page screenshot</summary>
+<summary>Diagnostics page screenshot</summary>
 
-<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/tools_en.png" alt="Tools and diagnostics page: diagnostics, network connectivity and routing preview" />
+<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/tools_en.png" alt="Diagnostics page: diagnostic information and network connectivity" />
 
 </details>
 
@@ -193,7 +209,7 @@ Call logs stay on your own server. When searching, the search terms and the firs
 
 - [Full guide](GUIDE_EN.md): routing modes, division-of-labor rules, evaluation data, privacy details
 - [Changelog (Chinese)](../CHANGELOG.md)
-- [Report a problem](https://github.com/liquidtoy001/astrbot_plugin_deepdeep/issues/new/choose): please attach the diagnostics from the Tools & diagnostics page
+- [Report a problem](https://github.com/liquidtoy001/astrbot_plugin_deepdeep/issues/new/choose): please attach the diagnostic information from the Diagnostics page
 - [Contributing](../.github/CONTRIBUTING.md)
 
 If you find it useful, a ⭐ Star is welcome.

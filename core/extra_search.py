@@ -185,7 +185,9 @@ def make_tool(api: SearchApi, description: str) -> Any:
     class ExtraSearchTool(FunctionTool):
         async def call(self, context: Any, **kwargs: Any) -> Any:
             text, is_error = await _RUNNERS[self.name](
-                str(kwargs.get("query") or ""), kwargs.get("count") or 0
+                str(kwargs.get("query") or ""),
+                kwargs.get("count") or 0,
+                getattr(getattr(context, "context", None), "event", None),
             )
             return error_result(text) if is_error else text
 
@@ -208,6 +210,8 @@ class ExtraSearch:
         self._astrbot = astrbot
         self._config = config
         self.client = ExtraClient()
+        # 失败时告诉模型具体换哪个工具，由插件主体提供：只有它知道本次请求里有哪些工具
+        self.advise: Any = None
         self.cache: TTLCache[Any] = TTLCache(0)
         self.default_count = 5
         self.max_count = 10
@@ -217,6 +221,8 @@ class ExtraSearch:
         self.failures: dict[str, dict[str, Any]] = {}
         # 服务商真正收费的调用才记一次，缓存命中和失败的不算（每月上限和花费估算都用它）
         self.on_billed: Any = lambda _tool: None
+        # 发请求之前占一个名额：返回还回去的函数；到上限了返回 None
+        self.reserve: Any = lambda _tool: lambda: None
 
     # ---------- 状态 ----------
 
@@ -279,8 +285,11 @@ class ExtraSearch:
             self.remove_tool(tool)
 
     def _runner(self, provider: Provider, label: str) -> Any:
-        async def run(query: str, count: Any) -> tuple[str, bool]:
-            return await self.search(provider, label, query, count)
+        async def run(query: str, count: Any, event: Any = None) -> tuple[str, bool]:
+            text, is_error = await self.search(provider, label, query, count)
+            if is_error and event is not None and self.advise is not None:
+                text = self.advise(event, provider.api.tool, text)
+            return text, is_error
 
         return run
 
@@ -308,8 +317,12 @@ class ExtraSearch:
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached, False
+        release = self.reserve(provider.api.tool)
+        if release is None:
+            return f"{label} 本月调用或花费已达上限。请改用其他搜索工具。", True
         try:
             results = await self.client.search(label, provider.api, key, query, n)
+            self.on_billed(provider.api.tool)
         except ExtraSearchError as exc:
             if exc.status in KEY_FAILURES:
                 self.failures[provider.key] = {
@@ -319,8 +332,9 @@ class ExtraSearch:
                 }
             logger.warning(f"[deepdeep] {label} 搜索失败 status={exc.status}")
             return f"{exc.message}。请改用其他搜索工具。", True
+        finally:
+            release()
         self.failures.pop(provider.key, None)
-        self.on_billed(provider.api.tool)
         text = format_results(label, query, results, self.max_chars)
         if results:
             self.cache.set(cache_key, text)

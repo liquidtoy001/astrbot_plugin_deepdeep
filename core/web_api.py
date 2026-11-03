@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import platform
+import secrets
 import sys
 import tempfile
 import time
@@ -19,10 +20,19 @@ from typing import TYPE_CHECKING, Any, Protocol
 from astrbot.api import logger
 from astrbot.api.web import error_response, file_response, json_response, request
 
-from . import catalog, connectivity, preference, route_view, setup_check
+from . import (
+    catalog,
+    connectivity,
+    kbtrace,
+    mcp_view,
+    preference,
+    route_view,
+    setup_check,
+)
 from .credentials import mask_key
 from .guide import TECH_DESC
 from .health import VERDICT_LABELS, assess
+from .model_pricing import PriceBook
 from .pricing import CURRENCIES
 from .providers import (
     BUILTIN_PROVIDER_TOOLS,
@@ -35,7 +45,7 @@ from .providers import (
     TAVILY_TOOL,
 )
 from .providers import get as get_provider
-from .router import ROUTING_MODES, ToolRouter
+from .router import SELECTABLE_MODES, ToolRouter
 from .uistate import UiState
 
 if TYPE_CHECKING:
@@ -73,6 +83,9 @@ EDITABLE_FIELDS: dict[str, tuple[type, Any, Any]] = {
     "circuit_cooldown_seconds": (int, 10, 86400),
     "call_log_enabled": (bool, None, None),
     "call_log_record_other_content": (bool, None, None),
+    "kb_trim_min_score": (float, 0, 1),
+    "kb_trim_chunk_chars": (int, 0, 20000),
+    "model_prices": (list, None, None),
     "call_log_retention_days": (int, 1, 365),
     "default_count": (int, 1, 50),
     "max_count": (int, 1, 50),
@@ -93,13 +106,14 @@ MAX_KEY_LENGTH = 512
 
 # 字符串配置项的可选值
 STR_CHOICES = {
-    "routing_mode": tuple(ROUTING_MODES),
+    "routing_mode": SELECTABLE_MODES,
     "billing_currency": tuple(CURRENCIES),
     "panel_language": ("auto", "zh", "en"),
     "search_preference": tuple(preference.PRESET_LABELS),
 }
 
 # 调用日志列表的时间范围（小时）
+CALL_CATEGORIES = {"search", "kb", "mcp", "plugin", "builtin"}
 RANGE_HOURS = {"1h": 1, "24h": 24, "7d": 168, "14d": 336, "30d": 720}
 CALL_STATUSES = {
     "ok",
@@ -110,6 +124,9 @@ CALL_STATUSES = {
     "interrupted",
     "running",
 }
+
+# 导出的文件留这么久，够浏览器下载完
+EXPORT_KEEP_SECONDS = 3600
 
 
 def _split_lines(value: Any) -> list[str]:
@@ -142,7 +159,9 @@ def validate_settings(payload: Any) -> tuple[dict[str, Any], str | None]:
             ):
                 return {}, f"{key} 必须是字符串列表"
             items = [v.strip() for v in value if v.strip()]
-            if len(items) > 80 or any(len(v) > 200 for v in items):
+            # 一家服务的调用上限可能要列出它的所有工具
+            longest = 4000 if key == "tool_monthly_limits" else 200
+            if len(items) > 80 or any(len(v) > longest for v in items):
                 return {}, f"{key} 条目过多或过长"
             clean[key] = items
         else:
@@ -150,7 +169,7 @@ def validate_settings(payload: Any) -> tuple[dict[str, Any], str | None]:
                 return {}, f"{key} 必须是数字"
             try:
                 num = typ(value)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 return {}, f"{key} 必须是数字"
             if not (lo <= num <= hi):
                 return {}, f"{key} 需在 {lo} 到 {hi} 之间"
@@ -172,6 +191,7 @@ class WebHost(Protocol):
     tavily_gate: TavilyGate
     extra_search: ExtraSearch
     spending: Spending
+    pricing: PriceBook
 
     @property
     def logging_enabled(self) -> bool: ...
@@ -216,9 +236,23 @@ class WebApi:
             ("call-facets", self.call_facets, ["GET"], "调用日志筛选项"),
             ("call-export", self.call_export, ["GET"], "导出调用日志"),
             ("call-clear", self.call_clear, ["POST"], "清空调用日志"),
+            ("call-feedback", self.call_feedback, ["POST"], "标记知识库检索有没有用"),
+            ("kb-stats", self.kb_stats, ["GET"], "知识库检索统计"),
+            ("kb-status", self.kb_status, ["GET"], "知识库是否正常"),
+            ("mcp", self.mcp, ["GET"], "MCP 服务和用量"),
+            ("kb-toggle", self.kb_toggle, ["POST"], "开关知识库"),
+            ("mcp-toggle", self.mcp_toggle, ["POST"], "开关 MCP 服务"),
+            ("mcp-tool-toggle", self.mcp_tool_toggle, ["POST"], "开关 MCP 工具"),
+            ("call-categories", self.call_categories, ["GET"], "调用日志分类"),
         ]
         for path, handler, methods, desc in routes:
             context.register_web_api(f"/{self.name}/{path}", handler, methods, desc)
+
+    def unregister(self, context: Any) -> None:
+        """AstrBot 卸载插件时不会清掉这些路由，留着的话旧面板还能改设置。"""
+        routes = getattr(context, "registered_web_apis", None)
+        if isinstance(routes, list):
+            routes[:] = [r for r in routes if not r[0].startswith(f"/{self.name}/")]
 
     # ---------- 读取 ----------
 
@@ -460,6 +494,9 @@ class WebApi:
         for row in self.host.call_log.tool_health(since):
             if router.search_category(row["tool"]) is None:
                 continue
+            # 知识库没查到内容、字面不重合都不算故障，只看调用有没有出错
+            if row["tool"] == KB_TOOL:
+                row = {**row, "empty": 0, "irrelevant": 0, "bad_streak": 0}
             item = {**row, **assess(row)}
             # 最近连续 3 次都有问题，即使整体比例不高也提醒
             if item["bad_streak"] >= 3 and item["verdict"] in ("ok", "unknown"):
@@ -577,7 +614,7 @@ class WebApi:
         router = self.host.router
         current = self.host.astrbot.current_tool_names()
         key, source = self.host.credentials.deepseek_key_source()
-        return catalog.build(
+        entries = catalog.build(
             deepseek={
                 "enabled": router.own_enabled,
                 "configured": bool(key),
@@ -595,6 +632,12 @@ class WebApi:
             prices=self.host.spending.custom_prices,
             billing=self.host.service.budget.currency.code,
         )
+        # 设置页按服务填调用上限，不用用户自己找工具名
+        known = list(self.host.astrbot.registered_tools())
+        for entry in entries:
+            if entry.get("tools"):
+                entry["cap"] = self.host.tool_caps.for_service(entry["tools"], known)
+        return entries
 
     def preference_data(self) -> dict[str, Any]:
         """设置页「搜索偏好」：各个预设下每类场景的工具顺序，切换预设时不用再请求。"""
@@ -726,9 +769,20 @@ class WebApi:
 
     def network_data(self) -> dict[str, Any]:
         url = self.searxng_url()
+        names = self.search_tool_names()
+        astrbot = self.host.astrbot
         return {
-            "groups": connectivity.describe(self.search_tool_names(), url),
-            "searxng_url": url,
+            "groups": [
+                *connectivity.describe(names, url),
+                *connectivity.describe_services(
+                    names,
+                    astrbot.mcp_servers(),
+                    astrbot.providers_info(),
+                    bool(astrbot.config().get("kb_names")),
+                ),
+            ],
+            # 只显示地址的主机部分：完整地址里可能有账号密码或 Key
+            "searxng_url": connectivity.origin_of(url),
             "last_check": self.last_network_check,
         }
 
@@ -737,7 +791,8 @@ class WebApi:
 
     async def network_check(self):
         data = await asyncio.to_thread(self.network_data)
-        result = await connectivity.run_check(data["groups"], data["searxng_url"])
+        searxng_url = await asyncio.to_thread(self.searxng_url)
+        result = await connectivity.run_check(data["groups"], searxng_url)
         self.last_network_check = result
         logger.info(
             "[deepdeep] 连通性检测：国内网站 "
@@ -755,7 +810,18 @@ class WebApi:
         svc = self.host.service
         s = svc.settings
         status = self.status_data()
-        recent_problems, _ = self.host.call_log.query({"problems_only": True}, limit=10)
+        problems, _ = self.host.call_log.query({"problems_only": True}, limit=10)
+        # 诊断信息可能发给别人：去掉会话（含用户 ID）和结果内容。
+        # 其他工具的错误文字可能带用户内容，DeepDeep 自己的工具只有固定的说明
+        recent_problems = [
+            {
+                k: v
+                for k, v in row.items()
+                if k not in ("session", "top_hit")
+                and (k != "error" or row["source"] == "deepseek")
+            }
+            for row in problems
+        ]
         tools = [
             t
             for t in self.host.router.preview(self.host.astrbot.current_tool_names())
@@ -805,7 +871,42 @@ class WebApi:
         }
 
     async def diagnostics(self):
-        return json_response(await asyncio.to_thread(self.diagnostics_data))
+        data = await asyncio.to_thread(self.diagnostics_data)
+        data["knowledge_base"] = await self.diagnostics_kb()
+        data["mcp"] = await asyncio.to_thread(self.diagnostics_mcp)
+        return json_response(data)
+
+    async def diagnostics_kb(self) -> dict[str, Any]:
+        config = await self.host.astrbot.kb_config()
+        recent = await asyncio.to_thread(
+            self.host.call_log.kb_health, time.time() - 86400
+        )
+        return {
+            **kbtrace.assess_status(config, recent),
+            "enabled_count": len(config["names"]),
+            "agentic": config["agentic"],
+            "recent_24h": recent,
+            "plugins": self.host.astrbot.kb_plugins(),
+        }
+
+    def diagnostics_mcp(self) -> dict[str, Any]:
+        self.fix_mcp_sources()
+        servers = mcp_view.build(
+            self.host.astrbot.mcp_servers(),
+            self.host.call_log.mcp_stats(time.time() - 7 * 86400),
+        )
+        # 不带错误输出：里面可能有服务地址或 Key
+        return {
+            **mcp_view.assess(servers),
+            "servers": [
+                {
+                    k: s[k]
+                    for k in ("name", "state", "transport", "calls", "errors", "avg_ms")
+                }
+                | {"tools": len(s["tools"])}
+                for s in servers
+            ],
+        }
 
     # ---------- 调用日志 ----------
 
@@ -825,6 +926,9 @@ class WebApi:
         keyword = (q.get("q") or "").strip()
         if keyword:
             filters["q"] = keyword[:200]
+        category = q.get("category") or ""
+        if category in CALL_CATEGORIES:
+            filters["category"] = category
         hours = RANGE_HOURS.get(q.get("range") or "")
         if hours:
             filters["since"] = time.time() - hours * 3600
@@ -868,12 +972,62 @@ class WebApi:
             range_key = "24h"
         return json_response(await asyncio.to_thread(self.search_stats_data, range_key))
 
+    def search_tool_names_logged(self) -> list[str]:
+        """日志里出现过的搜索和读网页工具，分类筛选用。"""
+        router = self.host.router
+        return [
+            tool
+            for tool in self.host.call_log.facets()["tools"]
+            if tool != KB_TOOL and router.search_category(tool) is not None
+        ]
+
+    def filters_with_tools(self) -> dict[str, Any]:
+        filters = self.call_filters()
+        if filters.get("category"):
+            filters["search_tools"] = self.search_tool_names_logged()
+        return filters
+
+    def fix_mcp_sources(self) -> None:
+        self.host.call_log.fix_mcp_sources(self.host.astrbot.mcp_tool_servers())
+
+    async def call_categories(self):
+        hours = RANGE_HOURS.get(request.query.get("range") or "")
+        since = time.time() - hours * 3600 if hours else None
+
+        def work() -> dict[str, int]:
+            self.fix_mcp_sources()
+            return self.host.call_log.category_counts(
+                since, self.search_tool_names_logged()
+            )
+
+        return json_response(await asyncio.to_thread(work))
+
+    async def mcp(self):
+        hours = RANGE_HOURS.get(request.query.get("range") or "7d")
+        since = time.time() - hours * 3600 if hours else None
+
+        def work() -> list[dict[str, Any]]:
+            self.fix_mcp_sources()
+            return mcp_view.build(
+                self.host.astrbot.mcp_servers(), self.host.call_log.mcp_stats(since)
+            )
+
+        servers = await asyncio.to_thread(work)
+        return json_response(
+            {
+                "servers": servers,
+                "status": mcp_view.assess(servers),
+                "logging_enabled": self.host.logging_enabled,
+            }
+        )
+
     async def calls(self):
         limit = request.query.get("limit", 50, type=int) or 50
         offset = request.query.get("offset", 0, type=int) or 0
         log = self.host.call_log
+        filters = await asyncio.to_thread(self.filters_with_tools)
         items, total = await asyncio.to_thread(
-            log.query, self.call_filters(), limit=limit, offset=offset
+            log.query, filters, limit=limit, offset=offset
         )
         summary = await asyncio.to_thread(log.summary)
         return json_response({"items": items, "total": total, "summary": summary})
@@ -892,18 +1046,24 @@ class WebApi:
         return json_response(await asyncio.to_thread(self.host.call_log.facets))
 
     async def call_export(self):
-        filters = self.call_filters()
+        filters = await asyncio.to_thread(self.filters_with_tools)
         export_dir = (
             Path(self.host.data_dir) / "exports"
             if self.host.data_dir
             else Path(tempfile.gettempdir()) / "astrbot_deepdeep_exports"
         )
 
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+
         def _write() -> Path:
             export_dir.mkdir(parents=True, exist_ok=True)
+            # 刚生成的可能还在下载，过一会儿才清
+            cutoff = time.time() - EXPORT_KEEP_SECONDS
             for old in export_dir.glob("calls-*.jsonl"):
-                old.unlink(missing_ok=True)
-            path = export_dir / f"calls-{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
+                if old.stat().st_mtime < cutoff:
+                    old.unlink(missing_ok=True)
+            # 同一秒的几次导出不能写到同一个文件
+            path = export_dir / f"calls-{stamp}-{secrets.token_hex(4)}.jsonl"
             with path.open("w", encoding="utf-8") as f:
                 for item in self.host.call_log.iter_all(filters):
                     f.write(json.dumps(item, ensure_ascii=False) + "\n")
@@ -911,7 +1071,7 @@ class WebApi:
 
         path = await asyncio.to_thread(_write)
         return file_response(
-            path, filename=path.name, content_type="application/x-ndjson"
+            path, filename=f"calls-{stamp}.jsonl", content_type="application/x-ndjson"
         )
 
     async def call_clear(self):
@@ -919,14 +1079,115 @@ class WebApi:
         logger.info(f"[deepdeep] WebUI 清空了调用日志（{removed} 条）")
         return json_response({"removed": removed})
 
+    async def call_feedback(self):
+        body = await self._body()
+        feedback = body.get("feedback")
+        if feedback not in ("good", "bad", None):
+            return error_response("无效的标记", status_code=400)
+        try:
+            row_id = int(body.get("id"))
+        except (TypeError, ValueError):
+            return error_response("无效的记录 ID", status_code=400)
+        found = await asyncio.to_thread(
+            self.host.call_log.set_feedback, row_id, feedback
+        )
+        if not found:
+            return error_response("记录不存在或已被清理", status_code=404)
+        return json_response({"id": row_id, "feedback": feedback})
+
+    async def kb_stats(self):
+        hours = RANGE_HOURS.get(request.query.get("range") or "")
+        since = time.time() - hours * 3600 if hours else None
+        stats = await asyncio.to_thread(self.host.call_log.kb_stats, since)
+        names = {p["name"]: p["display_name"] for p in self.host.astrbot.kb_plugins()}
+        for row in stats["by_plugin"]:
+            row["display_name"] = names.get(row["plugin"]) or row["plugin"]
+        await self.host.pricing.ensure_fresh()
+        stats["cost"] = self.host.pricing.kb_cost(
+            stats.pop("billing"), self.host.astrbot.providers_info()
+        )
+        stats["manual_prices"] = self.host.config.get("model_prices") or []
+        config = self.host.astrbot.config()
+        stats["settings"] = {
+            "trim_min_score": self.host.config.get("kb_trim_min_score", 0),
+            "trim_chunk_chars": self.host.config.get("kb_trim_chunk_chars", 0),
+            "final_top_k": config.get("kb_final_top_k"),
+        }
+        # 没有记录来源时无从比较，不返回
+        idle: dict[str, list] = {"idle_kbs": [], "idle_docs": []}
+        if stats["by_kb"]:
+            idle = await self.host.astrbot.idle_kb(
+                {r["kb"] for r in stats["by_kb"]},
+                {(r["kb"], r["doc"]) for r in stats["by_doc"]},
+            )
+        return json_response(
+            {**stats, **idle, "logging_enabled": self.host.logging_enabled}
+        )
+
+    async def _switch(self, name: Any, active: Any, action: Any):
+        """开关类接口的公共部分：校验参数，出错时把原因告诉页面。"""
+        if not isinstance(name, str) or not name or not isinstance(active, bool):
+            return error_response("参数不对", status_code=400)
+        try:
+            await action(name, active)
+        except Exception as exc:  # noqa: BLE001 - 包括 AstrBot 启动 MCP 服务时的各种错误
+            return error_response(f"操作失败：{exc}", status_code=400)
+        logger.info(f"[deepdeep] WebUI 把 {name} 设为 {'开启' if active else '关闭'}")
+        return None
+
+    async def kb_toggle(self):
+        body = await self._body()
+        failed = await self._switch(
+            body.get("name"), body.get("enabled"), self.host.astrbot.set_kb_enabled
+        )
+        return failed or await self.kb_status()
+
+    async def mcp_toggle(self):
+        body = await self._body()
+        failed = await self._switch(
+            body.get("name"), body.get("active"), self.host.astrbot.set_mcp_active
+        )
+        return failed or json_response({"ok": True})
+
+    async def mcp_tool_toggle(self):
+        body = await self._body()
+        name = body.get("name")
+        if name not in self.host.astrbot.mcp_tool_servers():
+            return error_response("不是 MCP 工具", status_code=400)
+        failed = await self._switch(
+            name, body.get("active"), self.host.astrbot.set_tool_active
+        )
+        return failed or json_response({"ok": True})
+
+    async def kb_status(self):
+        config = await self.host.astrbot.kb_config()
+        recent = await asyncio.to_thread(
+            self.host.call_log.kb_health, time.time() - 86400
+        )
+        return json_response(
+            {
+                **kbtrace.assess_status(config, recent),
+                "plugins": self.host.astrbot.kb_plugins(),
+                "config": config,
+                "recent": recent,
+                "logging_enabled": self.host.logging_enabled,
+            }
+        )
+
     # ---------- 写入 ----------
 
     async def save_settings(self):
         clean, err = validate_settings(await request.json(default={}))
         if err:
             return error_response(err, status_code=400)
-        await self.host.update_settings(clean)
-        logger.info(f"[deepdeep] WebUI 更新设置: {sorted(clean)}")
+        try:
+            await self.host.update_settings(clean)
+        except Exception as exc:  # noqa: BLE001 - 设置已经退回原样，把原因告诉页面
+            logger.warning(f"[deepdeep] 应用设置失败: {exc}")
+            return error_response(f"设置没有保存：{exc}", status_code=400)
+        # 切换语言很常见，不值得留在日志里
+        log = logger.debug if set(clean) == {"panel_language"} else logger.info
+        log(f"[deepdeep] WebUI 更新设置: {sorted(clean)}")
         return json_response(await asyncio.to_thread(self.status_data))
 
     async def save_key(self):

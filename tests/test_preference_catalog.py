@@ -5,8 +5,8 @@ from core.preference import Preference, format_order, parse_order, resolve
 from core.router import TECH_DESC, ToolRouter
 
 NAMES = [
-    "deepdeep_web_search",
-    "deepdeep_web_fetch",
+    "deepdeep_deepseek_search",
+    "deepdeep_deepseek_fetch",
     "deepdeep_tavily_search",
     "web_search_serpapi",
     "searxng_web_search_general",
@@ -18,7 +18,7 @@ NAMES = [
 def test_parse_format_and_resolve():
     pref = parse_order(
         [
-            "general = searxng_*, Deepdeep_web_search, !web_search_serpapi",
+            "general = searxng_*, Deepdeep_deepseek_search, !web_search_serpapi",
             "tech = deepdeep_tavily_search",
             "unknown = x",
             "bad line",
@@ -26,12 +26,12 @@ def test_parse_format_and_resolve():
         ]
     )
     assert pref.order == {
-        "general": ["searxng_*", "deepdeep_web_search"],
+        "general": ["searxng_*", "deepdeep_deepseek_search"],
         "tech": ["deepdeep_tavily_search"],
     }
     assert pref.disabled == {"general": ["web_search_serpapi"]}
     assert format_order(pref.order, pref.disabled) == [
-        "general = searxng_*, deepdeep_web_search, !web_search_serpapi",
+        "general = searxng_*, deepdeep_deepseek_search, !web_search_serpapi",
         "tech = deepdeep_tavily_search",
     ]
     assert resolve("rec") is None and resolve("nonsense") is None
@@ -52,24 +52,24 @@ def test_recommended_preset_keeps_old_guide():
 def test_custom_order_changes_guide_lanes_and_alternatives():
     pref = parse_order(
         [
-            "general = deepdeep_tavily_search, web_search_serpapi, deepdeep_web_search",
+            "general = deepdeep_tavily_search, web_search_serpapi, deepdeep_deepseek_search",
             "tech = web_search_serpapi, deepdeep_tavily_search",
-            "read = searxng_web_fetch_url, deepdeep_web_fetch",
+            "read = searxng_web_fetch_url, deepdeep_deepseek_fetch",
         ]
     )
     r = ToolRouter("guide_only", lane_rules=None, preference=pref)
     guide = r.guide(NAMES)
     assert (
         "- 新闻时事、中文资料、海外新闻、比赛和最新动态：优先 deepdeep_tavily_search；"
-        "没有结果或结果不理想时再用 web_search_serpapi、deepdeep_web_search、searxng_web_search_general"
+        "没有结果或结果不理想时再用 web_search_serpapi、deepdeep_deepseek_search、searxng_web_search_general"
         in guide
     )
     assert (
-        f"- {TECH_DESC}：优先 web_search_serpapi；不理想时再用 deepdeep_tavily_search、deepdeep_web_search"
+        f"- {TECH_DESC}：优先 web_search_serpapi；不理想时再用 deepdeep_tavily_search、deepdeep_deepseek_search"
         in guide
     )
     assert (
-        "- 读取网页全文：优先 searxng_web_fetch_url；读取失败时再用 deepdeep_web_fetch"
+        "- 读取网页全文：优先 searxng_web_fetch_url；读取失败时再用 deepdeep_deepseek_fetch"
         in guide
     )
     assert "- 找图片：searxng_web_search_images" in guide
@@ -111,9 +111,9 @@ def test_disabled_tools_only_when_off_in_every_scene():
 
 
 def test_deepseek_first_mode_keeps_deepseek_first():
-    pref = parse_order(["general = deepdeep_tavily_search, deepdeep_web_search"])
+    pref = parse_order(["general = deepdeep_tavily_search, deepdeep_deepseek_search"])
     r = ToolRouter("deepseek_first", lane_rules=None, preference=pref)
-    assert r.ordered("general", NAMES)[0] == "deepdeep_web_search"
+    assert r.ordered("general", NAMES)[0] == "deepdeep_deepseek_search"
     assert r.with_preference(None).preference is None and r.preference is pref
 
 
@@ -122,12 +122,12 @@ def test_presets_order_scenes():
     assert cheap.ordered("general", NAMES)[0] == "searxng_web_search_general"
     assert cheap.ordered("read", NAMES)[0] == "searxng_web_fetch_url"
     zh = ToolRouter(lane_rules=None, preference=resolve("zh"))
-    assert zh.ordered("tech", NAMES)[0] == "deepdeep_web_search"
+    assert zh.ordered("tech", NAMES)[0] == "deepdeep_deepseek_search"
 
 
 def test_label_for():
-    assert catalog.label_for("deepdeep_web_search") == "DeepSeek 搜索"
-    assert catalog.label_for("deepdeep_web_fetch") == "DeepSeek 读网页"
+    assert catalog.label_for("deepdeep_deepseek_search") == "DeepSeek 搜索"
+    assert catalog.label_for("deepdeep_deepseek_fetch") == "DeepSeek 读网页"
     assert catalog.label_for("searxng_web_fetch_url") == "SearXNG 读网页"
     assert catalog.label_for("web_search_serpapi") == "SerpApi（Google 结果）"
     assert catalog.label_for("my_tool") == "my_tool"
@@ -149,7 +149,7 @@ def build_catalog(**over):
             "websearch_tavily_key": ["t"],
         },
         "registered": {
-            "deepdeep_web_search": True,
+            "deepdeep_deepseek_search": True,
             "deepdeep_tavily_search": True,
             "searxng_web_search_general": True,
             "kimi_web_search": False,
@@ -219,7 +219,7 @@ def test_catalog_missing_and_off():
 def test_grouped_merges_one_backends_tools():
     rows = catalog.grouped(
         [
-            "deepdeep_web_search",
+            "deepdeep_deepseek_search",
             "searxng_web_search_news",
             "web_search_serpapi",
             "searxng_web_search_books",
@@ -227,7 +227,7 @@ def test_grouped_merges_one_backends_tools():
         False,
     )
     assert [r["name"] for r in rows] == [
-        "deepdeep_web_search",
+        "deepdeep_deepseek_search",
         "searxng_*",
         "web_search_serpapi",
     ]
@@ -244,11 +244,13 @@ def test_grouped_merges_one_backends_tools():
         }
     ]
     # 合成一行后保存的规则能排序它们全部
-    pref = parse_order(["general = searxng_*, deepdeep_web_search"])
-    assert pref.sort("general", ["deepdeep_web_search", "searxng_a", "searxng_b"]) == [
+    pref = parse_order(["general = searxng_*, deepdeep_deepseek_search"])
+    assert pref.sort(
+        "general", ["deepdeep_deepseek_search", "searxng_a", "searxng_b"]
+    ) == [
         "searxng_a",
         "searxng_b",
-        "deepdeep_web_search",
+        "deepdeep_deepseek_search",
     ]
 
 

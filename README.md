@@ -6,7 +6,7 @@
 
 **简体中文** | [English](docs/README_EN.md)
 
-**统一管理 AstrBot 内置搜索和社区搜索插件：自动选对工具，出错就换一家，付费搜索到上限自动停。**
+**统一管理和监控 AstrBot 的联网搜索（内置和社区插件）、知识库（内置和社区插件）和 MCP：自动选对搜索工具，出错就换一家，付费搜索到上限自动停，帮你改善搜索质量、看清花费。**
 
 [![Release](https://img.shields.io/github/v/release/liquidtoy001/astrbot_plugin_deepdeep?style=flat-square&color=4D6BFE)](https://github.com/liquidtoy001/astrbot_plugin_deepdeep/releases/latest) ![AstrBot](https://img.shields.io/badge/AstrBot-%E2%89%A54.26.0-2563EB?style=flat-square) [![CI](https://img.shields.io/github/actions/workflow/status/liquidtoy001/astrbot_plugin_deepdeep/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/liquidtoy001/astrbot_plugin_deepdeep/actions/workflows/ci.yml) [![兼容性](https://img.shields.io/github/actions/workflow/status/liquidtoy001/astrbot_plugin_deepdeep/compat.yml?branch=main&style=flat-square&label=%E5%85%BC%E5%AE%B9%E6%80%A7)](https://github.com/liquidtoy001/astrbot_plugin_deepdeep/actions/workflows/compat.yml) ![License](https://img.shields.io/badge/license-MIT-22A06B?style=flat-square)
 
@@ -29,6 +29,7 @@
 | **花了多少钱** | 去各家后台分别查 | 合并估算所有付费服务，到上限停付费工具，免费的继续用 |
 | **工具失效** | 用户问起才发现 | 失败、没结果、结果不相关都会亮灯，并写明怎么处理 |
 | **出了问题** | 翻 AstrBot 日志 | 每次调用都有记录，搜索工具还能看到第一条结果 |
+| **知识库和 MCP** | 不知道查没查到、花了多少 | 看得到检索质量、嵌入和重排花费、MCP 连接状态和工具说明占用的 token，还能直接开关 |
 
 ## 三步开始
 
@@ -121,20 +122,36 @@
 
 | 页面 | 用来做什么 |
 |---|---|
-| 概览 | 搜索是否正常、本月花费、今日用量、每类问题用哪家 |
-| 用量 | 各服务的花费占比和调用次数 |
+| 概览 | 搜索、知识库和 MCP 是否正常，需要处理的问题，本月花费和搜索趋势，每类问题用哪家 |
+| 搜索用量 | 近 30 天搜索次数，各服务的花费和调用次数，调用上限用了多少 |
+| 知识库监控 | 看检索查不查得到、嵌入和重排花了多少、结果有没有用，以及可以怎么改进 |
+| MCP监控 | 各 MCP 服务的状态、用量，以及工具说明占用的 token |
 | 调用日志 | 查看、筛选、导出每次工具调用，直接看到第一条结果 |
-| 设置 | 每月花费上限、偏向（推荐 / 省钱 / 中文优先）、填写 Key |
-| 工具与诊断 | 生成诊断信息、检测网络、查看每类问题会用哪些工具 |
+| 设置 | 每月花费上限、偏向（推荐 / 省钱 / 中文优先）、出问题时会怎样、填写 Key |
+| 诊断 | 生成诊断信息、检测网络 |
 
 普通使用只需要看“概览”和“设置”。设置改完会自动保存，难懂的选项都收在“高级设置”里，不用管也能正常工作。
 
-<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/overview.png" alt="概览页：搜索状态、本月花费、今日用量和主力搜索工具" />
+<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/overview.png" alt="概览页：服务状态、本月花费、搜索趋势和主力搜索工具" />
 
 <details>
-<summary>用量页截图</summary>
+<summary>搜索用量页截图</summary>
 
-<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/usage.png" alt="用量页：近 30 天搜索次数、各服务花费占比和各工具用量" />
+<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/usage.png" alt="搜索用量页：近 30 天搜索次数、各服务花费和各工具用量" />
+
+</details>
+
+<details>
+<summary>知识库监控页截图</summary>
+
+<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/kb.png" alt="知识库监控页：查得到吗、嵌入和重排花了多少、结果有用吗，以及各知识库的开关" />
+
+</details>
+
+<details>
+<summary>MCP监控页截图</summary>
+
+<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/mcp.png" alt="MCP监控页：各 MCP 服务的状态、调用次数、工具开关和工具说明占用的 token" />
 
 </details>
 
@@ -153,9 +170,9 @@
 </details>
 
 <details>
-<summary>工具与诊断页截图</summary>
+<summary>诊断页截图</summary>
 
-<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/tools.png" alt="工具与诊断页：诊断信息、网络连通性和工具路由预览" />
+<img src="https://raw.githubusercontent.com/liquidtoy001/astrbot_plugin_deepdeep/main/docs/images/tools.png" alt="诊断页：诊断信息和网络连通性" />
 
 </details>
 
@@ -193,7 +210,7 @@
 
 - [详细说明](docs/GUIDE.md)：路由模式、分工规则、评测数据、完整配置项、隐私细节
 - [更新日志](CHANGELOG.md)
-- [反馈问题](https://github.com/liquidtoy001/astrbot_plugin_deepdeep/issues/new/choose)：请附上面板“工具与诊断”页生成的诊断信息
+- [反馈问题](https://github.com/liquidtoy001/astrbot_plugin_deepdeep/issues/new/choose)：请附上面板“诊断”页生成的诊断信息
 - [参与开发](.github/CONTRIBUTING.md)
 
 如果觉得好用，欢迎点个 ⭐ Star。

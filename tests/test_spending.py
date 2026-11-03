@@ -13,7 +13,7 @@ from test_plugin import (
     plugin_module,  # noqa: F401 - pytest 夹具
 )
 
-OWN = ["deepdeep_web_search", "deepdeep_web_fetch", "deepdeep_tavily_search"]
+OWN = ["deepdeep_deepseek_search", "deepdeep_deepseek_fetch", "deepdeep_tavily_search"]
 
 
 def make(module, tools=(), provider=None, **config):
@@ -210,7 +210,7 @@ async def test_per_tool_limit_and_total_cap_are_independent(plugin_module):  # n
 
 async def test_zero_spend_leaves_prompt_untouched(plugin_module):  # noqa: F811
     plugin = make(plugin_module, monthly_budget=0.001)
-    names = ["web_search_brave", "deepdeep_web_search"]
+    names = ["web_search_brave", "deepdeep_deepseek_search"]
     kept, _ = await routed(plugin, names)
     assert "web_search_brave" in kept
     await plugin.terminate()

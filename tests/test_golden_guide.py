@@ -29,7 +29,7 @@ SHAPE_FILE = GOLDEN_DIR / "api_shape.json"
 UPDATE = bool(os.environ.get("DEEPDEEP_UPDATE_GOLDEN"))
 
 KEY = {"api_key": "sk-golden-key-123456"}
-OWN = ["deepdeep_web_search", "deepdeep_web_fetch", "deepdeep_tavily_search"]
+OWN = ["deepdeep_deepseek_search", "deepdeep_deepseek_fetch", "deepdeep_tavily_search"]
 NOT_SEARCH = ["set_user_nickname"]
 TAVILY_KEY = {"websearch_tavily_key": ["tvly-golden"]}
 

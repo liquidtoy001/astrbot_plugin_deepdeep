@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from collections.abc import Callable
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 from .log import logger
 from .pricing import CURRENCIES, DEFAULT_CURRENCY
@@ -14,6 +17,59 @@ KINDS = ("search", "fetch")
 
 COUNTERS = ("billable", "empty", "failed", "cache_hit")
 KEEP_DAYS = 62  # 足够覆盖“本月”和 WebUI 上的 30 天图表
+
+
+class _JsonFile:
+    """整个替换地保存 JSON。在事件循环里不等磁盘：交给一个线程，连着保存时只写最新的，顺序不会乱。"""
+
+    def __init__(self, path: Path | None) -> None:
+        self._path = path
+        self._lock = threading.Lock()
+        self._pending: str | None = None
+        self._worker: threading.Thread | None = None
+
+    def save(self, data: Any) -> None:
+        if self._path is None:
+            return
+        text = json.dumps(data, ensure_ascii=False)
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self.flush()
+            self._write(text)
+            return
+        with self._lock:
+            self._pending = text
+            if self._worker is None:
+                self._worker = threading.Thread(
+                    target=self._run, name="deepdeep-stats", daemon=True
+                )
+                self._worker.start()
+
+    def flush(self) -> None:
+        """等还没写完的内容落盘。"""
+        with self._lock:
+            worker = self._worker
+        if worker is not None:
+            worker.join()
+
+    def _run(self) -> None:
+        while True:
+            with self._lock:
+                text, self._pending = self._pending, None
+                if text is None:
+                    self._worker = None
+                    return
+            self._write(text)
+
+    def _write(self, text: str) -> None:
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._path.with_suffix(".tmp")
+            tmp.write_text(text, encoding="utf-8")
+            tmp.replace(self._path)
+        except OSError as exc:
+            logger.warning(f"[deepdeep] 保存统计文件失败: {exc}")
 
 
 class UsageStats:
@@ -25,6 +81,7 @@ class UsageStats:
         price: float = CURRENCIES[DEFAULT_CURRENCY].price,
     ) -> None:
         self._path = path
+        self._file = _JsonFile(path)
         # 每次成功请求的单价（计费币种），切换币种时由插件更新；统计文件只存次数
         self.price = price
         self._today = today
@@ -102,15 +159,10 @@ class UsageStats:
             logger.warning(f"[deepdeep] 读取统计文件失败，将重新计数: {exc}")
 
     def _save(self) -> None:
-        if self._path is None:
-            return
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(self._days, ensure_ascii=False), encoding="utf-8")
-            tmp.replace(self._path)
-        except OSError as exc:
-            logger.warning(f"[deepdeep] 保存统计文件失败: {exc}")
+        self._file.save(self._days)
+
+    def flush(self) -> None:
+        self._file.flush()
 
 
 KEEP_MONTHS = 3
@@ -126,6 +178,7 @@ class MonthlyCounter:
         self, path: Path | None, *, today: Callable[[], date] = date.today
     ) -> None:
         self._path = path
+        self._file = _JsonFile(path)
         self._today = today
         self._months: dict[str, dict[str, int]] = {}
         self._load()
@@ -169,14 +222,7 @@ class MonthlyCounter:
             }
 
     def _save(self) -> None:
-        if self._path is None:
-            return
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self._path.with_suffix(".tmp")
-            tmp.write_text(
-                json.dumps(self._months, ensure_ascii=False), encoding="utf-8"
-            )
-            tmp.replace(self._path)
-        except OSError as exc:
-            logger.warning(f"[deepdeep] 保存月度计数文件失败: {exc}")
+        self._file.save(self._months)
+
+    def flush(self) -> None:
+        self._file.flush()

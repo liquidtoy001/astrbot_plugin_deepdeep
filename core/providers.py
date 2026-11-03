@@ -25,9 +25,14 @@ from typing import TypeVar
 
 _T = TypeVar("_T")
 
-SEARCH_TOOL = "deepdeep_web_search"
-FETCH_TOOL = "deepdeep_web_fetch"
+SEARCH_TOOL = "deepdeep_deepseek_search"
+FETCH_TOOL = "deepdeep_deepseek_fetch"
 OWN_TOOLS = (SEARCH_TOOL, FETCH_TOOL)
+# 旧工具名：deepdeep 后面跟服务商才看得出是哪家。升级时迁移日志和配置
+OLD_TOOL_NAMES = {
+    "deepdeep_web_search": SEARCH_TOOL,
+    "deepdeep_web_fetch": FETCH_TOOL,
+}
 # DeepDeep 自带的 Tavily 搜索：不受“启用自带搜索”开关影响，作为技术类问题的首选和第一备用
 TAVILY_TOOL = "deepdeep_tavily_search"
 # AstrBot 内置的 Tavily 搜索工具（和 DeepDeep 的 Tavily 是同一个服务）

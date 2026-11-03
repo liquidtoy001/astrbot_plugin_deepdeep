@@ -1,11 +1,13 @@
 import asyncio
 import inspect
+from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, StarTools, register
 
+from .core import kbtrace
 from .core.activity import ActivityLog
 from .core.astrbot_view import AstrBotView
 from .core.cache import TTLCache
@@ -15,10 +17,18 @@ from .core.client import DeepSeekToolsClient, DeepSeekToolsError
 from .core.credentials import Credentials, TavilyGate
 from .core.extra_search import ExtraSearch
 from .core.guard import BudgetGuard, CircuitBreaker
+from .core.model_pricing import PriceBook, parse_model_prices
+from .core.pluginkb import PluginKbWatch
 from .core.preference import DEFAULT_PRESET, normalize_preset
 from .core.preference import resolve as resolve_preference
 from .core.pricing import DEFAULT_CURRENCY, get_currency
-from .core.providers import EXTRA_PROVIDERS, EXTRA_TOOLS, OWN_TOOLS, TAVILY_TOOL
+from .core.providers import (
+    EXTRA_PROVIDERS,
+    EXTRA_TOOLS,
+    OLD_TOOL_NAMES,
+    OWN_TOOLS,
+    TAVILY_TOOL,
+)
 from .core.providers import get as get_provider
 from .core.recorder import ToolCallRecorder
 from .core.router import DEFAULT_MODE, ToolRouter
@@ -36,12 +46,20 @@ from .core.tavily import TavilyClient, TavilySearch
 from .core.web_api import WebApi
 
 PLUGIN_NAME = "astrbot_plugin_deepdeep"
-PLUGIN_VERSION = "v1.1.1"
+PLUGIN_VERSION = "v1.2.0"
 ROUTING_EXTRA_KEY = "deepdeep_routing"
 
 # 这些情况不是 DeepSeek 故障（某个网页抓不到、没搜到、结果相关度低）：
 # 建议换工具再试，但不把 DeepDeep 的工具撤掉
 SOFT_REASONS = {"http_403", "http_404", "empty", "low_quality"}
+
+
+def _new_tool_names(item: Any) -> Any:
+    if not isinstance(item, str):
+        return item
+    for old, new in OLD_TOOL_NAMES.items():
+        item = item.replace(old, new)
+    return item
 
 
 @register(
@@ -87,6 +105,7 @@ class DeepSeekSearchPlugin(Star):
             MonthlyCounter(data_dir / "tool_usage.json" if data_dir else None)
         )
         self.extra_search.on_billed = self.tool_caps.record
+        self.extra_search.reserve = self._reserve_extra
         self.usd_cny_rate = 0.0
         self.spending = Spending(
             stats=stats,
@@ -98,30 +117,107 @@ class DeepSeekSearchPlugin(Star):
         )
         self.service.budget.other_month_cost = self.spending.other_cost
         self.panel_language = "auto"
-        self.call_log = self._open_call_log(data_dir)
+        self.call_log = self._open_call_log(
+            data_dir, cfg_float(config, "call_log_retention_days", 14, 1, 365)
+        )
         self.recorder = ToolCallRecorder(
             self.call_log,
             self.service.activity,
             own_tools=OWN_TOOLS,
             plugin_resolver=_resolve_plugin_name,
             is_search=lambda name: self.router.search_category(name) is not None,
+            mcp_server_of=self.astrbot.mcp_server_of,
+            kb_plugin=self.astrbot.is_kb_plugin,
         )
+        self.pricing = PriceBook(
+            data_dir / "model_prices.json" if data_dir is not None else None,
+            usd_rate=lambda: self.usd_cny_rate,
+        )
+        self.kb_trim_min_score = 0.0
+        self.kb_trim_chunk_chars = 0
         self._cache_ttl: float | None = None
+        self._migrate_config(config)
+        self.call_log.rename_tools(OLD_TOOL_NAMES)
+        self.extra_search.advise = self._advise_switch
         self.apply_config()
 
         self.web = WebApi(self, PLUGIN_NAME, PLUGIN_VERSION)
         self.web.register(context)
+        self._restore_kb_retrieve = self._watch_kb(context)
+        self.plugin_kb = PluginKbWatch(
+            kb_plugins=self.astrbot.kb_plugins,
+            providers=self._kb_providers,
+            on_inject=self.recorder.on_plugin_inject,
+        )
 
     @staticmethod
-    def _open_call_log(data_dir) -> CallLog:
+    def _migrate_config(config: AstrBotConfig) -> None:
+        """升级时改一次旧配置，保存失败下次启动再迁移，这次照常运行。"""
+        changed = False
+        # “暂停 DeepSeek”和“不干预”已经去掉：换成效果相同或更好的设置
+        mode = config.get("routing_mode")
+        if mode in ("fallback_only", "coexist"):
+            config["routing_mode"] = DEFAULT_MODE
+            if mode == "fallback_only":
+                config["own_tools_enabled"] = False
+            changed = True
+        # 旧工具名写在调用上限、搜索顺序这些规则里
+        for key, value in list(config.items()):
+            if not isinstance(value, list):
+                continue
+            renamed = [_new_tool_names(item) for item in value]
+            if renamed != value:
+                config[key] = renamed
+                changed = True
+        saver = getattr(config, "save_config", None)
+        if not changed or saver is None:
+            return
+        try:
+            saver()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[deepdeep] 保存迁移后的设置失败: {exc}")
+
+    def _kb_providers(self) -> list[tuple[str, Any]]:
+        manager = getattr(self.context, "provider_manager", None)
+        return [
+            *(
+                ("embedding", p)
+                for p in getattr(manager, "embedding_provider_insts", None) or ()
+            ),
+            *(
+                ("rerank", p)
+                for p in getattr(manager, "rerank_provider_insts", None) or ()
+            ),
+        ]
+
+    def _watch_kb(self, context: Context):
+        """旁听知识库检索。较早的 AstrBot 没有 kb_manager，这时只有工具名和耗时。"""
+        try:
+            manager = getattr(context, "kb_manager", None)
+            return (
+                kbtrace.install(
+                    manager,
+                    self.recorder.on_kb_retrieve,
+                    lambda: (self.kb_trim_min_score, self.kb_trim_chunk_chars),
+                )
+                if manager
+                else None
+            )
+        except Exception as exc:  # noqa: BLE001 - 接口变化时不影响插件其他功能
+            logger.warning(f"[deepdeep] 无法记录知识库检索详情: {exc}")
+            return None
+
+    @staticmethod
+    def _open_call_log(data_dir, retention_days: float) -> CallLog:
+        # 打开时就会清理一次，所以保留天数要在这里给对
         if data_dir is not None:
             try:
-                return CallLog(data_dir / "calls.db")
+                return CallLog(data_dir / "calls.db", retention_days=retention_days)
             except Exception as exc:  # noqa: BLE001 - 数据库打不开时退回内存，不影响搜索
                 logger.warning(
                     f"[deepdeep] 调用日志数据库打开失败，改用内存（重启后清空）: {exc}"
                 )
-        return CallLog(None)
+        return CallLog(None, retention_days=retention_days)
 
     # ---------- 配置 ----------
 
@@ -167,6 +263,9 @@ class DeepSeekSearchPlugin(Star):
         svc.breaker.hard_cooldown = max(svc.breaker.cooldown, 1800)
         svc.activity.record_targets = bool(c.get("record_queries", True))
         self.usd_cny_rate = cfg_float(c, "exchange_rate", 7.1, 0, 100)
+        self.kb_trim_min_score = cfg_float(c, "kb_trim_min_score", 0, 0, 1)
+        self.kb_trim_chunk_chars = cfg_int(c, "kb_trim_chunk_chars", 0, 0, 20000)
+        self.pricing.manual = parse_model_prices(c.get("model_prices"))
         self.recorder.enabled = bool(c.get("call_log_enabled", True))
         self.recorder.record_other_content = bool(
             c.get("call_log_record_other_content", False)
@@ -220,6 +319,9 @@ class DeepSeekSearchPlugin(Star):
             "record_queries": bool(c.get("record_queries", True)),
             "call_log_enabled": self.recorder.enabled,
             "call_log_record_other_content": self.recorder.record_other_content,
+            "kb_trim_min_score": self.kb_trim_min_score,
+            "kb_trim_chunk_chars": self.kb_trim_chunk_chars,
+            "model_prices": list(c.get("model_prices") or []),
             "call_log_retention_days": int(self.call_log.retention_days),
             "circuit_threshold": svc.breaker.threshold,
             "circuit_cooldown_seconds": int(svc.breaker.cooldown),
@@ -238,10 +340,22 @@ class DeepSeekSearchPlugin(Star):
         }
 
     async def update_settings(self, clean: dict) -> None:
-        """保存面板改的设置（已校验）并立即生效。"""
+        """让面板改的设置（已校验）生效，再保存。不能生效的设置不保存，免得下次启动还出错。"""
         config = self.config
+        missing = object()
+        before = {k: config.get(k, missing) for k in clean}
         for k, v in clean.items():
             config[k] = v
+        try:
+            self.apply_config()
+        except Exception:
+            for k, v in before.items():
+                if v is missing:
+                    del config[k]
+                else:
+                    config[k] = v
+            self.apply_config()
+            raise
         saver = getattr(config, "save_config_async", None) or getattr(
             config, "save_config", None
         )
@@ -249,7 +363,6 @@ class DeepSeekSearchPlugin(Star):
             result = saver()
             if inspect.isawaitable(result):
                 await result
-        self.apply_config()
 
     @property
     def logging_enabled(self) -> bool:
@@ -396,14 +509,37 @@ class DeepSeekSearchPlugin(Star):
 
     # ---------- 调用日志：记录所有工具的调用 ----------
 
+    # 优先级最高，赶在其他插件改写 prompt 之前，才能和刚才的检索词对上
+    @filter.on_llm_request(priority=1000)
+    async def record_kb_injection(self, event: AstrMessageEvent, req: ProviderRequest):
+        try:
+            self.plugin_kb.sync()
+            umo = getattr(event, "unified_msg_origin", None)
+            await self.recorder.on_llm_request(umo, getattr(req, "prompt", None))
+        except Exception as exc:  # noqa: BLE001 - 记录失败绝不能影响请求
+            logger.warning(f"[deepdeep] 记录知识库注入失败: {exc}")
+
     @filter.on_using_llm_tool()
     async def record_tool_start(self, event: AstrMessageEvent, tool, tool_args):
         try:
             await self.recorder.on_start(
-                id(event), getattr(event, "unified_msg_origin", None), tool, tool_args
+                id(event),
+                getattr(event, "unified_msg_origin", None),
+                tool,
+                tool_args,
+                context_tokens=self._context_tokens(event),
             )
         except Exception as exc:  # noqa: BLE001 - 记录失败绝不能影响工具调用
             logger.warning(f"[deepdeep] 记录工具调用失败: {exc}")
+
+    @staticmethod
+    def _context_tokens(event: AstrMessageEvent) -> int | None:
+        """模型上一轮的总 token 数，AstrBot 每轮更新在本次对话上。没有时返回 None。"""
+        try:
+            request = event.get_extra("provider_request")
+            return request.conversation.token_usage or None
+        except Exception:  # noqa: BLE001 - 只是附加信息
+            return None
 
     @filter.on_llm_tool_respond()
     async def record_tool_end(
@@ -415,6 +551,7 @@ class DeepSeekSearchPlugin(Star):
             logger.warning(f"[deepdeep] 记录工具结果失败: {exc}")
         try:
             self._count_tool_use(tool, tool_result)
+            self._drop_capped_tools(event)
         except Exception as exc:  # noqa: BLE001 - 计数失败不影响工具调用
             logger.warning(f"[deepdeep] 记录工具用量失败: {exc}")
 
@@ -433,15 +570,32 @@ class DeepSeekSearchPlugin(Star):
             return
         self.tool_caps.record(name)
 
+    def _drop_capped_tools(self, event: AstrMessageEvent) -> None:
+        """一个 Agent 可以连着调用很多次工具，路由只在开始时看一次。其他插件的工具拦不住单次调用，
+        所以到了上限就从这次请求里拿掉，模型下一步就用不了了。"""
+        state = event.get_extra(ROUTING_EXTRA_KEY)
+        toolset = getattr(state, "toolset", None)
+        if toolset is None:
+            return
+        names = toolset.names()
+        for name in {*self.tool_caps.blocked(names), *self.spending.blocked(names)}:
+            toolset.remove_tool(name)
+
+    def _reserve_extra(self, tool: str) -> Any:
+        """DeepDeep 自带的其他搜索工具真正发请求之前：到上限了返回 None，否则占一个名额。"""
+        if self.spending.blocked([tool]):
+            return None
+        return self.tool_caps.reserve(tool)
+
     @filter.on_agent_done()
     async def record_agent_done(self, event: AstrMessageEvent, run_context, response):
         try:
-            await self.recorder.on_agent_done(id(event))
+            await self.recorder.on_agent_done(id(event), kbtrace.usage_fields(response))
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"[deepdeep] 收尾调用日志失败: {exc}")
 
     @filter.llm_tool(name=OWN_TOOLS[0])
-    async def deepdeep_web_search(
+    async def deepdeep_deepseek_search(
         self, event: AstrMessageEvent, query: str, count: int = 0
     ) -> str:
         """联网搜索网页，获取实时信息（新闻、事实核查、价格、版本、天气、赛事、人物近况等）。每条结果带长摘要、链接、发布日期、相关度和权威度。
@@ -451,7 +605,7 @@ class DeepSeekSearchPlugin(Star):
         "精确短语"；-关键词 排除词；lang:zh,en 限定语言；after:2026-01-01 / before:2026-06 限定发布时间。
         结果按相关度而不是时间排序：问“最新、最近、今天”这类问题时，务必用 after: 限定为今天往前几天的日期，
         并以结果里的日期为准，不要把较早的内容当成最新。B 站等视频平台的页面收录有限，可改搜相关报道。
-        摘要不够详细时，再用 deepdeep_web_fetch 读取具体网页。
+        摘要不够详细时，再用 deepdeep_deepseek_fetch 读取具体网页。
 
         Args:
             query(string): 搜索关键词，最多 128 字，可包含上面的语法
@@ -464,7 +618,7 @@ class DeepSeekSearchPlugin(Star):
         return self._finish(event, outcome)
 
     @filter.llm_tool(name=OWN_TOOLS[1])
-    async def deepdeep_web_fetch(self, event: AstrMessageEvent, url: str) -> str:
+    async def deepdeep_deepseek_fetch(self, event: AstrMessageEvent, url: str) -> str:
         """读取指定网页的完整内容（Markdown 格式）。用于用户发来链接、或搜索结果摘要不够详细时。
 
         Args:
@@ -482,15 +636,24 @@ class DeepSeekSearchPlugin(Star):
     ) -> str:
         """用 Tavily 联网搜索，擅长英文网页和技术资料：编程、软件版本号、安全漏洞（CVE）、官方文档、开源项目等。
 
-        结果大多不带发布日期；问新闻、比赛、“最新、最近”这类时效问题时优先用 deepdeep_web_search。
+        结果大多不带发布日期；问新闻、比赛、“最新、最近”这类时效问题时优先用 deepdeep_deepseek_search。
 
         Args:
             query(string): 搜索关键词，用简洁的关键词，技术问题建议用英文
             count(number): 返回结果数，可不填，默认 5
         """
+        if self.spending.blocked([TAVILY_TOOL]):
+            listed = (
+                "、".join(self._switch_options(event, TAVILY_TOOL)[:3]) or OWN_TOOLS[0]
+            )
+            return (
+                f"Tavily 搜索暂不可用：本月花费已达上限。请改用 {listed} 继续完成任务。"
+            )
         if self.tavily.limit_reached():
             # 路由从下一次请求起会拿掉这个工具；本次请求里已经提供了，就引导模型换工具
-            listed = "、".join(self._tavily_alternatives(event)[:3]) or OWN_TOOLS[0]
+            listed = (
+                "、".join(self._switch_options(event, TAVILY_TOOL)[:3]) or OWN_TOOLS[0]
+            )
             return (
                 f"本月 Tavily 调用已达上限（{self.tavily.usage_text()}），"
                 f"请改用 {listed} 继续完成任务。"
@@ -504,7 +667,7 @@ class DeepSeekSearchPlugin(Star):
         )
         if not outcome.should_fallback:
             return outcome.text
-        alts = self._tavily_alternatives(event)
+        alts = self._switch_options(event, TAVILY_TOOL)
         if not alts:
             return outcome.text
         listed = "、".join(alts[:3])
@@ -512,15 +675,24 @@ class DeepSeekSearchPlugin(Star):
             return f"{outcome.text}\n可以改用 {listed} 再搜一次。"
         return f"{outcome.text}\n请改用 {listed} 继续完成任务。"
 
-    def _tavily_alternatives(self, event: AstrMessageEvent) -> list[str]:
-        """Tavily 不能用时推荐的搜索工具：DeepDeep 在前，其余按备用顺序。"""
+    def _switch_options(self, event: AstrMessageEvent, failed: str) -> list[str]:
+        """自带搜索不能用时推荐的工具：DeepSeek 在前，其余按备用顺序。“只用 DeepSeek”时不推荐。"""
+        if self.router.mode == "deepseek_only":
+            return []
         state = event.get_extra(ROUTING_EXTRA_KEY)
         names = state.toolset.names() if state is not None else []
-        alts = [n for n in names if n == OWN_TOOLS[0] and self.router.own_enabled]
-        alts += [
-            n for n in self.router.alternatives(names, "search") if n != TAVILY_TOOL
-        ]
-        return alts
+        fetch = self.router.is_fetch_like(failed)
+        own = OWN_TOOLS[1] if fetch else OWN_TOOLS[0]
+        alts = [own] if own in names and self.router.own_enabled else []
+        alts += self.router.alternatives(names, "fetch" if fetch else "search")
+        return [n for n in dict.fromkeys(alts) if n != failed]
+
+    def _advise_switch(self, event: AstrMessageEvent, failed: str, text: str) -> str:
+        """把“请改用其他搜索工具”换成具体的工具名，模型才知道下一步用谁。"""
+        alts = self._switch_options(event, failed)
+        if not alts:
+            return text
+        return f"{text.removesuffix('请改用其他搜索工具。')}请改用 {'、'.join(alts[:3])} 继续完成任务。"
 
     # ---------- 管理命令 ----------
 
@@ -678,14 +850,25 @@ class DeepSeekSearchPlugin(Star):
             )
 
     async def terminate(self):
+        self.web.unregister(self.context)
+        if self._restore_kb_retrieve:
+            self._restore_kb_retrieve()
+        self.plugin_kb.restore()
+        await self.pricing.close()
         await self.service.client.close()
         await self.tavily.client.close()
         await self.extra_search.client.close()
         self.extra_search.remove_all()
+        await asyncio.to_thread(self._flush_counters)
         try:
             self.call_log.close()
         except Exception as exc:  # noqa: BLE001
             logger.debug(f"[deepdeep] 关闭调用日志失败: {exc}")
+
+    def _flush_counters(self) -> None:
+        self.service.stats.flush()
+        self.tavily.usage.flush()
+        self.tool_caps.counter.flush()
 
 
 def _resolve_plugin_name(module: str) -> str | None:

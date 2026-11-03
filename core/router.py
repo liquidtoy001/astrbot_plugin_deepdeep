@@ -40,6 +40,9 @@ ROUTING_MODES = (
     "coexist",
 )
 DEFAULT_MODE = "guide_only"
+# 面板和配置里能选的。fallback_only 等于关掉 DeepSeek 开关，coexist 出错时不提醒模型换工具，
+# 都不再提供；旧配置在插件启动时迁移（见 main.py）
+SELECTABLE_MODES = ("guide_only", "deepseek_first", "deepseek_only")
 
 # 可以互相替代的通用搜索工具：先是通用规则，再加上工具名不符合通用规则的各家（见 providers.py）
 DEFAULT_FALLBACK_PATTERNS = [
@@ -83,7 +86,7 @@ DEFAULT_LANE_RULES = [f"{TECH_DESC} = {TAVILY_TOOL}, {TAVILY_BUILTIN_SEARCH}"]
 SAME_BACKEND_PATTERNS = list(DEEPSEEK_BILLED_PATTERNS)
 BUDGET_REASONS = frozenset({"budget_daily", "budget_monthly"})
 
-# 抓取类工具：只有本次请求里有 deepdeep_web_fetch 时才把它们藏起来
+# 抓取类工具：只有本次请求里有 deepdeep_deepseek_fetch 时才把它们藏起来
 FETCH_LIKE_PATTERNS = ["*fetch*", "*extract*", "*get_contents*", "*read_page*"]
 
 

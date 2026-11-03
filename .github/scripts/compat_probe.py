@@ -148,6 +148,36 @@ def _star_tools():
 check("StarTools.get_data_dir", _star_tools)
 
 
+def _plugin_kb() -> bool:
+    from astrbot.core.provider.provider import EmbeddingProvider, RerankProvider
+    from astrbot.core.star.star import star_map  # noqa: F401
+    from astrbot.core.star.star_handler import EventType, star_handlers_registry
+
+    return (
+        isinstance(
+            star_handlers_registry.get_handlers_by_event_type(
+                EventType.OnLLMRequestEvent
+            ),
+            list,
+        )
+        and hasattr(EmbeddingProvider, "get_embedding")
+        and hasattr(EmbeddingProvider, "get_embeddings")
+        and hasattr(RerankProvider, "rerank")
+    )
+
+
+check("社区知识库插件注入：钩子注册表和嵌入、重排接口", _plugin_kb)
+
+
+def _web_api_list() -> bool:
+    from astrbot.core.star.context import Context
+
+    return isinstance(Context.registered_web_apis, list)
+
+
+check("Context.registered_web_apis：卸载时撤掉面板接口", _web_api_list)
+
+
 def _toolset():
     from astrbot.core.agent.tool import ToolSet
 

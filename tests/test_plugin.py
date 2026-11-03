@@ -3,6 +3,7 @@
 
 import importlib
 import json
+import re
 import sys
 import time
 import types
@@ -283,8 +284,8 @@ class FakeEvent:
 
 
 SEARCH_TOOLS = [
-    "deepdeep_web_search",
-    "deepdeep_web_fetch",
+    "deepdeep_deepseek_search",
+    "deepdeep_deepseek_fetch",
     "web_search_tavily",
     "tavily_extract_web_page",
     "searxng_web_search_general",
@@ -326,8 +327,8 @@ def api(plugin, route, method="GET"):
 
 def test_tool_docstrings_parse_like_astrbot(plugin_module):
     assert set(registered_tools) == {
-        "deepdeep_web_search",
-        "deepdeep_web_fetch",
+        "deepdeep_deepseek_search",
+        "deepdeep_deepseek_fetch",
         "deepdeep_tavily_search",
     }
     for name, fn in registered_tools.items():
@@ -344,7 +345,7 @@ def test_tool_docstrings_parse_like_astrbot(plugin_module):
     search_params = [
         p.arg_name
         for p in docstring_parser.parse(
-            registered_tools["deepdeep_web_search"].__doc__
+            registered_tools["deepdeep_deepseek_search"].__doc__
         ).params
     ]
     assert search_params == ["query", "count"]
@@ -416,10 +417,10 @@ async def test_tools_end_to_end(plugin_module, fake_api, tmp_path):
     fake_api.search_queue.append((200, {"results": [make_result(1)]}, {}))
     fake_api.fetch_queue.append((200, {"title": "T", "content": "body"}, {}))
 
-    text = await plugin.deepdeep_web_search(
+    text = await plugin.deepdeep_deepseek_search(
         FakeEvent("沙沙帮我查下 DeepSeek"), "DeepSeek", "3"
     )
-    page = await plugin.deepdeep_web_fetch(FakeEvent(), "https://example.com/1")
+    page = await plugin.deepdeep_deepseek_fetch(FakeEvent(), "https://example.com/1")
     assert "标题1" in text and "body" in page
     # 按次计费，至少向 API 要 10 条，给模型看的仍按 count
     assert fake_api.requests[0]["json"]["count"] == 10
@@ -454,8 +455,8 @@ async def test_route_hides_fallback_tools_when_deepseek_available(plugin_module)
     req = types.SimpleNamespace(func_tool=toolset)
     await plugin.route_search_tools(FakeEvent(), req)
     assert toolset.names() == [
-        "deepdeep_web_search",
-        "deepdeep_web_fetch",
+        "deepdeep_deepseek_search",
+        "deepdeep_deepseek_fetch",
         "searxng_web_search_images",  # 图片搜索保留
         "set_user_nickname",
     ]
@@ -469,7 +470,7 @@ async def test_route_uses_fallback_when_budget_exceeded(plugin_module):
     await plugin.route_search_tools(
         FakeEvent(), types.SimpleNamespace(func_tool=toolset)
     )
-    assert "deepdeep_web_search" not in toolset.names()
+    assert "deepdeep_deepseek_search" not in toolset.names()
     assert "web_search_tavily" in toolset.names()
     await plugin.terminate()
 
@@ -484,11 +485,11 @@ async def test_failure_mid_conversation_restores_fallback(plugin_module, fake_ap
     await plugin.route_search_tools(event, types.SimpleNamespace(func_tool=toolset))
     assert "searxng_web_search_general" not in toolset.names()
 
-    text = await plugin.deepdeep_web_search(event, "x")
+    text = await plugin.deepdeep_deepseek_search(event, "x")
     assert "余额不足" in text and "已为本次对话启用备用搜索工具" in text
     names = toolset.names()
     assert "searxng_web_search_general" in names and "web_search_tavily" in names
-    assert "deepdeep_web_search" not in names  # 服务不可用，撤掉 DeepSeek 工具
+    assert "deepdeep_deepseek_search" not in names  # 服务不可用，撤掉 DeepSeek 工具
     # 402 直接熔断，下一轮请求开始就走备用
     assert not plugin.service.availability().ok
     await plugin.terminate()
@@ -502,11 +503,11 @@ async def test_page_specific_fetch_failure_keeps_deepseek_tools(
     toolset = FakeToolSet(SEARCH_TOOLS)
     event = FakeEvent()
     await plugin.route_search_tools(event, types.SimpleNamespace(func_tool=toolset))
-    text = await plugin.deepdeep_web_fetch(event, "https://example.com/x")
+    text = await plugin.deepdeep_deepseek_fetch(event, "https://example.com/x")
     assert "searxng_web_fetch_url" in text and "再读取一次" in text
     assert "web_search_tavily" not in text  # 抓取失败不推荐搜索工具
     assert (
-        "deepdeep_web_search" in toolset.names()
+        "deepdeep_deepseek_search" in toolset.names()
         and "searxng_web_fetch_url" in toolset.names()
     )
     assert plugin.service.availability().ok  # 404 不计入熔断
@@ -521,7 +522,7 @@ async def test_deepseek_only_mode_never_falls_back(plugin_module, fake_api):
     toolset = FakeToolSet(SEARCH_TOOLS)
     event = FakeEvent()
     await plugin.route_search_tools(event, types.SimpleNamespace(func_tool=toolset))
-    text = await plugin.deepdeep_web_search(event, "x")
+    text = await plugin.deepdeep_deepseek_search(event, "x")
     assert "联网搜索暂时不可用" in text
     assert "web_search_tavily" not in toolset.names()
     await plugin.terminate()
@@ -579,7 +580,7 @@ async def test_web_save_settings_validates_persists_and_applies(plugin_module):
     assert plugin.config.saved == 0
 
     CURRENT_REQUEST.body = {
-        "routing_mode": "fallback_only",
+        "routing_mode": "deepseek_first",
         "daily_budget": 0.5,
         "fallback_tool_patterns": [" web_search_* ", ""],
         "exchange_rate": 7.2,
@@ -589,9 +590,9 @@ async def test_web_save_settings_validates_persists_and_applies(plugin_module):
     status = await save()
     assert plugin.config.saved == 1
     assert plugin.config["api_key"] == "sk-test-key-123456"
-    assert status["settings"]["routing_mode"] == "fallback_only"
+    assert status["settings"]["routing_mode"] == "deepseek_first"
     assert status["settings"]["fallback_tool_patterns"] == ["web_search_*"]
-    assert plugin.router.mode == "fallback_only"
+    assert plugin.router.mode == "deepseek_first"
     assert plugin.service.budget.daily_limit == 0.5
     assert status["settings"]["exchange_rate"] == 7.2 and plugin.usd_cny_rate == 7.2
     assert status["settings"]["billing_currency"] == "usd"
@@ -626,7 +627,7 @@ async def test_fallback_is_annotated_on_activity(plugin_module, fake_api):
     toolset = FakeToolSet(SEARCH_TOOLS)
     event = FakeEvent()
     await plugin.route_search_tools(event, types.SimpleNamespace(func_tool=toolset))
-    text = await plugin.deepdeep_web_search(event, "q")
+    text = await plugin.deepdeep_deepseek_search(event, "q")
     assert text.startswith("[DeepSeek 搜索 #")
     detail = plugin.service.activity.recent(1)[0]["detail"]
     assert detail["fallback"]["restored_tools"]
@@ -638,9 +639,9 @@ async def test_diagnostics_has_no_secret(plugin_module, fake_api):
     plugin = make_plugin(plugin_module, fake_api, max_retries=0)
     fake_api.search_queue.append((401, {"error": {"message": "bad key"}}, {}))
     # 按 AstrBot 的顺序触发：调用前钩子 -> 工具 -> 调用后钩子
-    event, tool = FakeEvent(), FakeTool("deepdeep_web_search")
+    event, tool = FakeEvent(), FakeTool("deepdeep_deepseek_search")
     await plugin.record_tool_start(event, tool, {"query": "q"})
-    text = await plugin.deepdeep_web_search(event, "q")
+    text = await plugin.deepdeep_deepseek_search(event, "q")
     result = types.SimpleNamespace(
         content=[types.SimpleNamespace(text=text)], isError=False
     )
@@ -653,7 +654,7 @@ async def test_diagnostics_has_no_secret(plugin_module, fake_api):
     assert diag["recent_problems"][0]["status"] == "error"
     assert diag["call_log"]["total"] == 1
     assert {t["name"] for t in diag["search_tools"]} >= {
-        "deepdeep_web_search",
+        "deepdeep_deepseek_search",
         "web_search_tavily",
     }
     await plugin.terminate()
@@ -741,7 +742,7 @@ async def test_search_stats_reports_consecutive_search_rate(plugin_module):
     event.unified_msg_origin = "aiocqhttp:GroupMessage:a"
     for name in (
         "web_search_tavily",
-        "deepdeep_web_fetch",  # 读网页、知识库和其他工具都不算搜索
+        "deepdeep_deepseek_fetch",  # 读网页、知识库和其他工具都不算搜索
         "astr_kb_search",
         "set_user_nickname",
         "web_search_tavily",
@@ -780,7 +781,7 @@ async def test_route_injects_search_guide(plugin_module):
     assert req.system_prompt.startswith("你叫沙沙。")
     assert "【搜索工具分工】" in req.system_prompt
     assert (
-        "通用网页搜索（新闻、事实、中文资料等）：deepdeep_web_search"
+        "通用网页搜索（新闻、事实、中文资料等）：deepdeep_deepseek_search"
         in req.system_prompt
     )
     assert "- 找图片：searxng_web_search_images" in req.system_prompt
@@ -822,15 +823,15 @@ async def test_guide_only_is_default_and_never_hides(plugin_module):
     assert toolset.names() == SEARCH_TOOLS  # 一个都不藏
     # 默认的按类型分工：技术问题先用 Tavily，其余先用 DeepDeep
     assert (
-        "新闻时事、中文资料、海外新闻、比赛和最新动态：优先 deepdeep_web_search；"
+        "新闻时事、中文资料、海外新闻、比赛和最新动态：优先 deepdeep_deepseek_search；"
         "没有结果或结果不理想时再用 web_search_tavily、searxng_web_search_general"
     ) in req.system_prompt
     assert (
-        "编程、软件版本、安全漏洞、官方文档等技术问题：优先 web_search_tavily；不理想时再用 deepdeep_web_search"
+        "编程、软件版本、安全漏洞、官方文档等技术问题：优先 web_search_tavily；不理想时再用 deepdeep_deepseek_search"
         in req.system_prompt
     )
     assert (
-        "读取网页全文：优先 deepdeep_web_fetch；读取失败时再用 searxng_web_fetch_url、tavily_extract_web_page"
+        "读取网页全文：优先 deepdeep_deepseek_fetch；读取失败时再用 searxng_web_fetch_url、tavily_extract_web_page"
         in req.system_prompt
     )
 
@@ -853,7 +854,7 @@ async def test_guide_only_failure_suggests_alternatives(plugin_module, fake_api)
     await plugin.route_search_tools(
         event, types.SimpleNamespace(func_tool=toolset, system_prompt="")
     )
-    text = await plugin.deepdeep_web_search(event, "q")
+    text = await plugin.deepdeep_deepseek_search(event, "q")
     assert "请改用 web_search_tavily、searxng_web_search_general 继续完成任务" in text
     assert toolset.names() == SEARCH_TOOLS  # 不改工具列表
     detail = plugin.service.activity.recent(1)[0]["detail"]
@@ -872,7 +873,7 @@ async def test_guide_only_budget_excludes_deepseek_billed(plugin_module):
     await plugin.route_search_tools(
         event, types.SimpleNamespace(func_tool=toolset, system_prompt="")
     )
-    text = await plugin.deepdeep_web_search(event, "q")  # 上限低于单价，直接拦截
+    text = await plugin.deepdeep_deepseek_search(event, "q")  # 上限低于单价，直接拦截
     assert "已达到今日费用上限" in text
     assert "web_search_deepseek" not in text.split("请改用", 1)[1].split("继续", 1)[0]
     assert "不要改用其他同样走 DeepSeek 计费的工具" in text
@@ -895,9 +896,9 @@ async def test_empty_and_low_quality_results_suggest_other_tools(
     await plugin.route_search_tools(
         event, types.SimpleNamespace(func_tool=toolset, system_prompt="")
     )
-    empty = await plugin.deepdeep_web_search(event, "冷门问题")
-    low = await plugin.deepdeep_web_search(event, "模糊问题")
-    good = await plugin.deepdeep_web_search(event, "清楚的问题")
+    empty = await plugin.deepdeep_deepseek_search(event, "冷门问题")
+    low = await plugin.deepdeep_deepseek_search(event, "模糊问题")
+    good = await plugin.deepdeep_deepseek_search(event, "清楚的问题")
     hint = "如果结果不够好，可以改用 web_search_tavily、searxng_web_search_general 再搜一次"
     assert hint in empty and hint in low and hint not in good
     assert plugin.service.availability().ok  # 不算故障，不触发熔断
@@ -912,10 +913,10 @@ async def test_hide_mode_soft_fallback_keeps_own_tools(plugin_module, fake_api):
     await plugin.route_search_tools(
         event, types.SimpleNamespace(func_tool=toolset, system_prompt="")
     )
-    text = await plugin.deepdeep_web_search(event, "冷门问题")
+    text = await plugin.deepdeep_deepseek_search(event, "冷门问题")
     assert "已为本次对话启用" in text
     names = toolset.names()
-    assert "deepdeep_web_search" in names and "web_search_tavily" in names
+    assert "deepdeep_deepseek_search" in names and "web_search_tavily" in names
     await plugin.terminate()
 
 
@@ -929,8 +930,8 @@ async def test_own_tools_switch_removes_them_per_request(plugin_module, fake_api
     toolset = FakeToolSet(SEARCH_TOOLS)
     req = types.SimpleNamespace(func_tool=toolset, system_prompt="")
     await plugin.route_search_tools(FakeEvent(), req)
-    assert "deepdeep_web_search" not in toolset.names()
-    assert "deepdeep_web_fetch" not in toolset.names()
+    assert "deepdeep_deepseek_search" not in toolset.names()
+    assert "deepdeep_deepseek_fetch" not in toolset.names()
     assert "web_search_tavily" in toolset.names()
     # 分工说明照常，首选换成其他通用搜索
     assert (
@@ -939,7 +940,7 @@ async def test_own_tools_switch_removes_them_per_request(plugin_module, fake_api
     )
     assert "deepdeep" not in req.system_prompt
     # 万一模型仍调用（比如请求没经过路由），返回说明而不发请求
-    text = await plugin.deepdeep_web_search(FakeEvent(), "q")
+    text = await plugin.deepdeep_deepseek_search(FakeEvent(), "q")
     assert "已在插件设置中关闭" in text and not fake_api.requests
     await plugin.terminate()
 
@@ -951,7 +952,7 @@ async def test_own_tools_switch_saved_from_webui(plugin_module):
     assert status["settings"]["own_tools_enabled"] is False
     assert plugin.router.own_enabled is False
     preview = {t["name"]: t for t in plugin.router.preview(SEARCH_TOOLS)}
-    assert not preview["deepdeep_web_search"]["visible_when_ok"]
+    assert not preview["deepdeep_deepseek_search"]["visible_when_ok"]
     assert preview["web_search_tavily"]["visible_when_ok"]
     await plugin.terminate()
 
@@ -973,7 +974,7 @@ async def test_overview_flags_broken_tools_without_changing_routing(plugin_modul
     h = data["health"]["searxng_web_search_general"]
     assert h["verdict"] == "broken" and h["irrelevant"] == 4
     lanes = {lane["key"]: lane for lane in data["lanes"]}
-    assert lanes["search"]["primary"] == "deepdeep_web_search"
+    assert lanes["search"]["primary"] == "deepdeep_deepseek_search"
     assert lanes["search"]["backups"] == [
         "web_search_tavily",
         "searxng_web_search_general",
@@ -1036,7 +1037,7 @@ async def test_tavily_tool_reuses_builtin_key(plugin_module, fake_api):
     await plugin.route_search_tools(event, req)
     assert "deepdeep_tavily_search" in toolset.names()
     assert (
-        "技术问题：优先 deepdeep_tavily_search；不理想时再用 deepdeep_web_search"
+        "技术问题：优先 deepdeep_tavily_search；不理想时再用 deepdeep_deepseek_search"
         in req.system_prompt
     )
     fake_api.tavily_queue.append(
@@ -1063,7 +1064,7 @@ async def test_tavily_tool_reuses_builtin_key(plugin_module, fake_api):
     # 失败时建议改用 DeepDeep
     fake_api.tavily_queue.append((432, {"detail": "limit"}, {}))
     text = await plugin.deepdeep_tavily_search(event, "python 3.15", 2)
-    assert "请改用 deepdeep_web_search" in text
+    assert "请改用 deepdeep_deepseek_search" in text
     status = await api(plugin, "status")()
     assert status["tavily"]["masked"]
     # 唯一的 Key 额度用完：暂停提供，约 24 小时后再试
@@ -1143,6 +1144,7 @@ async def test_tavily_monthly_limit_removes_tool_until_next_month(
     fake_api.tavily_queue.append((200, TAVILY_HIT, {}))
     assert "成功" in await plugin.deepdeep_tavily_search(event, "python 3.14", 2)
     # 计数保存在插件数据目录
+    plugin.tavily.usage.flush()
     assert json.loads(
         (
             tmp_path
@@ -1156,7 +1158,7 @@ async def test_tavily_monthly_limit_removes_tool_until_next_month(
     sent = len(fake_api.requests)
     text = await plugin.deepdeep_tavily_search(event, "python 3.15", 2)
     assert text.startswith("本月 Tavily 调用已达上限（本月 Tavily 已用 1 / 1 次）")
-    assert "请改用 deepdeep_web_search" in text and len(fake_api.requests) == sent
+    assert "请改用 deepdeep_deepseek_search" in text and len(fake_api.requests) == sent
     # 之后的请求里拿掉工具，分工说明不再提它；同一个月里每次都一样
     for _ in range(2):
         _, toolset, prompt = await routed(plugin)
@@ -1201,7 +1203,7 @@ async def test_tavily_key_failure_shows_in_setup_check(plugin_module, fake_api):
     assert "本月 Tavily 已用 0 次" in items["tavily"]["detail"]
     fake_api.tavily_queue.append((401, {"detail": "bad"}, {}))
     text = await plugin.deepdeep_tavily_search(event, "q", 1)
-    assert "请改用 deepdeep_web_search" in text
+    assert "请改用 deepdeep_deepseek_search" in text
     data = await api(plugin, "overview")()
     items = {it["key"]: it for it in data["setup"]["items"]}
     item = items["tavily:http_401"]
@@ -1235,7 +1237,8 @@ async def test_lane_rules_saved_from_webui(plugin_module):
     assert status["settings"]["search_lane_rules"] == ["技术问题 = web_search_tavily"]
     guide = plugin.router.guide(SEARCH_TOOLS)
     assert (
-        "- 技术问题：优先 web_search_tavily；不理想时再用 deepdeep_web_search" in guide
+        "- 技术问题：优先 web_search_tavily；不理想时再用 deepdeep_deepseek_search"
+        in guide
     )
     await plugin.terminate()
 
@@ -1328,12 +1331,12 @@ async def test_ignore_and_disable_from_webui(plugin_module, tmp_path):
 
     # 停用：真的调用 AstrBot 的停用接口，并能重新启用；DeepDeep 自己的工具不能这样停用
     CURRENT_REQUEST.body = {
-        "tools": ["grok_web_search", "deepdeep_web_search", "web_search_tavily"],
+        "tools": ["grok_web_search", "deepdeep_deepseek_search", "web_search_tavily"],
         "reason": "没有 Key",
     }
     data = await api(plugin, "disable-tools", "POST")()
     assert data["done"] == ["grok_web_search"] and grok.active is False
-    assert set(data["failed"]) == {"deepdeep_web_search", "web_search_tavily"}
+    assert set(data["failed"]) == {"deepdeep_deepseek_search", "web_search_tavily"}
     assert data["handled"]["disabled"][0]["tool"] == "grok_web_search"
     assert data["handled"]["disabled"][0]["still_disabled"] is True
     # 停用后不再出现在配置检查的问题里
@@ -1402,7 +1405,7 @@ async def test_other_tool_monthly_limit(plugin_module, tmp_path):
         event, FakeTool("set_user_nickname"), {}, ok
     )  # 非搜索工具不算
     await plugin.record_tool_end(
-        event, FakeTool("deepdeep_web_search"), {}, ok
+        event, FakeTool("deepdeep_deepseek_search"), {}, ok
     )  # 自己的工具不算
     assert plugin.tool_caps.counter.counts() == {"searxng_web_search_general": 1}
     toolset = FakeToolSet(SEARCH_TOOLS)
@@ -1416,6 +1419,7 @@ async def test_other_tool_monthly_limit(plugin_module, tmp_path):
     await plugin.route_search_tools(event, req)
     assert not [n for n in toolset.names() if n.startswith("searxng_")]
     assert "searxng_" not in req.system_prompt
+    plugin.tool_caps.counter.flush()
     assert (
         tmp_path
         / "data"
@@ -1516,14 +1520,14 @@ async def test_search_preference_endpoint_and_route(plugin_module):
         "custom",
     }
     general = [x["name"] for x in prefs["orders"]["rec"]["general"]]
-    assert general[0] == "deepdeep_web_search"
+    assert general[0] == "deepdeep_deepseek_search"
     assert prefs["orders"]["rec"]["general"][0]["label"] == "DeepSeek 搜索"
     assert prefs["orders"]["custom"] == prefs["orders"]["rec"]  # 还没自定义过
     # 保存自定义：SearXNG 优先，读网页不用 SearXNG
     CURRENT_REQUEST.body = {
         "search_preference": "custom",
         "search_order": [
-            "general = searxng_web_search_general, deepdeep_web_search",
+            "general = searxng_web_search_general, deepdeep_deepseek_search",
             "read = !searxng_web_fetch_url",
         ],
     }
@@ -1561,11 +1565,11 @@ async def test_no_deepseek_key_removes_own_tools_from_request(plugin_module):
     toolset = FakeToolSet(SEARCH_TOOLS)
     req = types.SimpleNamespace(func_tool=toolset, system_prompt="")
     await plugin.route_search_tools(FakeEvent(), req)
-    assert "deepdeep_web_search" not in toolset.names()
-    assert "deepdeep_web_search" not in req.system_prompt
+    assert "deepdeep_deepseek_search" not in toolset.names()
+    assert "deepdeep_deepseek_search" not in req.system_prompt
     assert "web_search_tavily" in req.system_prompt
     # 面板的主力工具和实际请求一致
-    assert "deepdeep_web_search" not in plugin.web.search_tool_names()
+    assert "deepdeep_deepseek_search" not in plugin.web.search_tool_names()
     data = await api(plugin, "overview")()
     deepseek = next(it for it in data["setup"]["items"] if it["key"] == "deepseek")
     assert deepseek["status"] == "info"
@@ -1581,7 +1585,7 @@ async def test_today_cards_count_every_search_tool(plugin_module):
         ("web_search_bocha", "builtin", "error"),
         ("keenable_web_search", "plugin:k", "empty"),
         ("keenable_fetch_page", "plugin:k", "ok"),
-        ("deepdeep_web_search", "deepseek", "cache_hit"),
+        ("deepdeep_deepseek_search", "deepseek", "cache_hit"),
         ("web_search_brave", "builtin", "blocked"),
         ("astr_kb_search", "builtin", "ok"),
         ("set_user_nickname", "plugin:x", "ok"),
@@ -1696,7 +1700,11 @@ async def test_own_field_still_wins_over_astrbot_key(plugin_module):
 
 
 async def test_quick_start_only_when_no_search_works(plugin_module):
-    own = ["deepdeep_web_search", "deepdeep_web_fetch", "deepdeep_tavily_search"]
+    own = [
+        "deepdeep_deepseek_search",
+        "deepdeep_deepseek_fetch",
+        "deepdeep_tavily_search",
+    ]
     empty = plugin_module.DeepSeekSearchPlugin(
         FakeContext(tool_names=own), FakeConfig({})
     )
@@ -1719,8 +1727,8 @@ async def test_quick_start_only_when_no_search_works(plugin_module):
 async def test_overview_lanes_speak_plainly(plugin_module):
     ctx = FakeContext(
         tool_names=[
-            "deepdeep_web_search",
-            "deepdeep_web_fetch",
+            "deepdeep_deepseek_search",
+            "deepdeep_deepseek_fetch",
             "deepdeep_tavily_search",
         ]
     )
@@ -1766,9 +1774,11 @@ def test_hidden_config_fields_stay_reachable_from_the_panel(plugin_module):
     )
     # 搜索偏好和顺序在“偏向”里，不是表单字段
     # 各服务的开关在服务卡片上，由接口数据生成
+    # 模型价格在知识库监控页每个模型的“改价格”里
     for key in {k for k in hidden if not k.endswith("_enabled")} - {
         "search_order",
         "custom_prices",
+        "model_prices",
     }:
         assert f'name="{key}"' in html, key
 
@@ -1777,8 +1787,8 @@ async def test_nothing_configured_is_reported_as_missing(plugin_module):
     # 注册了 Tavily 工具但没有 Key，不能算“有别的搜索工具”
     ctx = FakeContext(
         tool_names=[
-            "deepdeep_web_search",
-            "deepdeep_web_fetch",
+            "deepdeep_deepseek_search",
+            "deepdeep_deepseek_fetch",
             "deepdeep_tavily_search",
         ]
     )
@@ -1788,9 +1798,258 @@ async def test_nothing_configured_is_reported_as_missing(plugin_module):
     assert deepseek["status"] == "missing" and data["setup"]["missing"] == 1
     # 请求里保留自带工具，让模型拿到“未配置”的明确说明
     toolset = FakeToolSet(
-        ["deepdeep_web_search", "deepdeep_web_fetch", "deepdeep_tavily_search"]
+        [
+            "deepdeep_deepseek_search",
+            "deepdeep_deepseek_fetch",
+            "deepdeep_tavily_search",
+        ]
     )
     req = types.SimpleNamespace(func_tool=toolset, system_prompt="")
     await plugin.route_search_tools(FakeEvent(), req)
-    assert toolset.names() == ["deepdeep_web_search", "deepdeep_web_fetch"]
+    assert toolset.names() == ["deepdeep_deepseek_search", "deepdeep_deepseek_fetch"]
     await plugin.terminate()
+
+
+async def test_diagnostics_leave_out_users_and_content(plugin_module):
+    plugin = plugin_module.DeepSeekSearchPlugin(FakeContext(), FakeConfig({}))
+    plugin.call_log.add(
+        tool="t",
+        source="builtin",
+        status="error",
+        session="qq:GroupMessage:12345",
+        top_hit="私密内容",
+        error="失败原因",
+    )
+    data = plugin.web.diagnostics_data()
+    problem = data["recent_problems"][0]
+    # 其他工具的错误文字可能带用户内容，诊断信息里不带
+    assert "error" not in problem
+    assert "session" not in problem and "top_hit" not in problem
+    assert "12345" not in json.dumps(data, ensure_ascii=False, default=str)
+    kb = await plugin.web.diagnostics_kb()
+    assert kb["verdict"] == "off" and kb["recent_24h"]["total"] == 0
+    assert plugin.web.diagnostics_mcp()["verdict"] == "off"
+
+
+def test_all_setting_fields_stay_inside_the_form():
+    """设置都在“设置”页的表单里；“出问题时会怎样”的选项只影响显示，不触发保存。"""
+    html = (PLUGIN_ROOT / "pages" / "dashboard" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    start = html.index('<form id="settings"')
+    end = html.index("</form>", start)
+    inside = html[start:end]
+    for name in (
+        "monthly_budget",
+        "billing_currency",
+        "routing_mode",
+        "own_tools_enabled",
+    ):
+        assert f'name="{name}"' in inside, name
+    # 路由选项在“出问题时会怎样”里，会保存；“显示工具名”只影响显示，不保存
+    routing = inside[
+        inside.index('id="sec-routing"') : inside.index('id="sec-catalog"')
+    ]
+    for mode in ("guide_only", "deepseek_first", "deepseek_only"):
+        assert f'name="routing_mode" value="{mode}"' in routing
+    assert 'name="circuit_threshold"' in routing
+    assert '<div class="route-foot" data-no-save>' in routing
+    assert 'id="sec-catalog"' in inside
+    # 主力搜索工具在概览
+    overview = html[html.index('data-page="overview" role="tabpanel"') :]
+    assert overview.index('id="sec-tools"') < overview.index('data-page="usage"')
+
+
+@pytest.mark.parametrize(
+    ("old", "own_enabled"), [("fallback_only", False), ("coexist", True)]
+)
+def test_removed_routing_modes_are_migrated_once(plugin_module, old, own_enabled):
+    class Saving(FakeConfig):
+        saved = 0
+
+        def save_config(self):
+            self.saved += 1
+
+    config = Saving({"routing_mode": old})
+    plugin = plugin_module.DeepSeekSearchPlugin(FakeContext(), config)
+    assert config["routing_mode"] == "guide_only"
+    assert plugin.router.mode == "guide_only"
+    assert plugin.router.own_enabled is own_enabled
+    assert config.saved == 1
+    plugin_module.DeepSeekSearchPlugin(FakeContext(), config)
+    assert config.saved == 1
+
+
+def test_removed_routing_modes_cannot_be_saved():
+    web_api = sys.modules["astrbot_plugin_deepdeep.core.web_api"]
+    for mode in ("fallback_only", "coexist"):
+        _clean, error = web_api.validate_settings({"routing_mode": mode})
+        assert error
+    assert web_api.validate_settings({"routing_mode": "deepseek_only"})[1] is None
+
+
+def test_old_tool_names_are_migrated(plugin_module, tmp_path):
+    class Saving(FakeConfig):
+        saved = 0
+
+        def save_config(self):
+            self.saved += 1
+
+    config = Saving(
+        {
+            "tool_monthly_limits": ["deepdeep_web_search = 100"],
+            "search_order": ["general = deepdeep_web_search, deepdeep_tavily_search"],
+        }
+    )
+    plugin = plugin_module.DeepSeekSearchPlugin(FakeContext(), config)
+    assert config["tool_monthly_limits"] == ["deepdeep_deepseek_search = 100"]
+    assert "deepdeep_deepseek_search" in config["search_order"][0]
+    assert config.saved == 1
+    plugin_module.DeepSeekSearchPlugin(FakeContext(), config)
+    assert config.saved == 1
+    plugin.call_log.add(tool="deepdeep_web_fetch", source="deepseek", status="ok")
+    plugin.call_log.rename_tools({"deepdeep_web_fetch": "deepdeep_deepseek_fetch"})
+    assert plugin.call_log.query()[0][0]["tool"] == "deepdeep_deepseek_fetch"
+
+
+class _Toolset:
+    def __init__(self, names):
+        self._names = names
+
+    def names(self):
+        return self._names
+
+
+class _Event:
+    def __init__(self, names):
+        self.extra = {
+            "deepseek_routing": types.SimpleNamespace(toolset=_Toolset(names))
+        }
+
+    def get_extra(self, key):
+        return next(iter(self.extra.values()))
+
+
+def test_failed_own_tool_names_what_to_use_instead(plugin_module):
+    plugin = plugin_module.DeepSeekSearchPlugin(FakeContext(), FakeConfig({}))
+    names = [
+        "deepdeep_deepseek_search",
+        "deepdeep_tavily_search",
+        "deepdeep_serper_search",
+        "web_search_x",
+    ]
+    out = plugin._advise_switch(
+        _Event(names), "deepdeep_serper_search", "Serper 请求失败。请改用其他搜索工具。"
+    )
+    assert out.startswith("Serper 请求失败。请改用 deepdeep_deepseek_search")
+    assert "deepdeep_serper_search" not in out
+    assert "其他搜索工具" not in out
+
+
+def test_only_deepseek_mode_does_not_suggest_switching(plugin_module):
+    plugin = plugin_module.DeepSeekSearchPlugin(
+        FakeContext(), FakeConfig({"routing_mode": "deepseek_only"})
+    )
+    text = "失败。请改用其他搜索工具。"
+    event = _Event(["deepdeep_deepseek_search", "web_search_x"])
+    assert plugin._advise_switch(event, "deepdeep_tavily_search", text) == text
+
+
+def test_no_alternative_keeps_the_original_text(plugin_module):
+    plugin = plugin_module.DeepSeekSearchPlugin(FakeContext(), FakeConfig({}))
+    text = "失败。请改用其他搜索工具。"
+    assert (
+        plugin._advise_switch(
+            _Event(["deepdeep_serper_search"]), "deepdeep_serper_search", text
+        )
+        == text
+    )
+
+
+def test_spending_fields_moved_to_the_spending_card():
+    html = (PLUGIN_ROOT / "pages" / "dashboard" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    card = html[html.index('id="sec-cap"') : html.index('id="sec-pref"')]
+    for name in (
+        "monthly_budget",
+        "billing_currency",
+        "exchange_rate",
+        "daily_budget",
+        "tavily_monthly_limit",
+        "tool_monthly_limits",
+    ):
+        assert f'name="{name}"' in card, name
+    advanced = html[html.index('<details class="advanced"') :]
+    assert 'name="billing_currency"' not in advanced
+
+
+def test_register_decorates_the_plugin_class():
+    """装饰器要紧贴插件类：装饰错了，工具还能用，但 WebUI 里找不到插件。"""
+    import ast
+
+    tree = ast.parse((PLUGIN_ROOT / "main.py").read_text(encoding="utf-8"))
+    registered = [
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef))
+        and any(
+            isinstance(d, ast.Call) and getattr(d.func, "id", "") == "register"
+            for d in node.decorator_list
+        )
+    ]
+    assert registered == ["DeepSeekSearchPlugin"]
+
+
+def test_spending_ring_and_trend_are_on_the_overview():
+    html = (PLUGIN_ROOT / "pages" / "dashboard" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    overview = html[
+        html.index('data-page="overview" role="tabpanel"') : html.index(
+            'data-page="usage" role="tabpanel"'
+        )
+    ]
+    for element in (
+        "spend-ring",
+        "spend-forecast",
+        "trend",
+        "today-search",
+        "today-fetch",
+    ):
+        assert f'id="{element}"' in overview, element
+
+
+def test_catalog_entries_carry_their_call_limit(plugin_module):
+    plugin = plugin_module.DeepSeekSearchPlugin(
+        FakeContext(tool_names=["web_search_x"]),
+        FakeConfig({"tool_monthly_limits": ["web_search_x = 7"]}),
+    )
+    entries = {e["key"]: e for e in plugin.web.catalog_data()}
+    capped = next(
+        e for e in entries.values() if "web_search_x" in (e.get("tools") or [])
+    )
+    assert capped["cap"]["pattern"] == "web_search_x"
+    assert capped["cap"]["limit"] == 7
+
+
+def test_setting_links_point_at_real_settings():
+    pages = PLUGIN_ROOT / "pages" / "dashboard"
+    html = (pages / "index.html").read_text(encoding="utf-8")
+    script = (pages / "app.js").read_text(encoding="utf-8")
+    targets = set(re.findall(r'data-setting="([a-z_-]+)"', html))
+    targets |= set(re.findall(r'settingLink\("([a-z_-]+)"', script))
+    targets |= set(
+        re.findall(
+            r'settingLink\(call\.source === "deepseek" \? "([a-z_]+)" : "([a-z_]+)"',
+            script,
+        )[0]
+    )
+    assert len(targets) >= 10
+    form = html[
+        html.index('<form id="settings"') : html.index(
+            "</form>", html.index('<form id="settings"')
+        )
+    ]
+    for target in targets:
+        assert f'name="{target}"' in form or f'id="{target}"' in form, target

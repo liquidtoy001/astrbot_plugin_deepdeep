@@ -78,7 +78,7 @@ async def _run(tool, *, record_targets=True):
     rec = ToolCallRecorder(
         log,
         ActivityLog(record_targets=record_targets),
-        own_tools=("deepdeep_web_search",),
+        own_tools=("deepdeep_deepseek_search",),
         is_search=lambda name: name == "web_search_x",
     )
     await rec.on_start(1, None, _Tool(tool), {"query": "q"})

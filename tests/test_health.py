@@ -11,7 +11,7 @@ from core.calllog import CallLog
 from core.health import assess, classify, extract_query, query_terms, relevance
 from core.recorder import ToolCallRecorder
 
-OWN = ("deepdeep_web_search", "deepdeep_web_fetch")
+OWN = ("deepdeep_deepseek_search", "deepdeep_deepseek_fetch")
 
 
 # ---------- 单次结果的判断 ----------
@@ -156,8 +156,8 @@ async def test_recorder_scores_results_without_storing_content():
 
 def test_describe_groups_tools_by_backend():
     names = [
-        "deepdeep_web_search",
-        "deepdeep_web_fetch",
+        "deepdeep_deepseek_search",
+        "deepdeep_deepseek_fetch",
         "web_search_deepseek",
         "searxng_web_search_general",
         "searxng_web_search_videos",
@@ -167,7 +167,10 @@ def test_describe_groups_tools_by_backend():
         "astr_kb_search",
     ]
     groups = {g["key"]: g for g in connectivity.describe(names, "http://searxng:8080")}
-    assert groups["deepseek"]["tools"] == ["deepdeep_web_search", "web_search_deepseek"]
+    assert groups["deepseek"]["tools"] == [
+        "deepdeep_deepseek_search",
+        "web_search_deepseek",
+    ]
     assert groups["deepdeep_fetch"]["kind"] == "cloud"
     sx = groups["searxng"]
     assert (

@@ -116,8 +116,8 @@ def test_format_truncates_long_content():
 # ---------- 按问题类型分工 ----------
 
 NAMES = [
-    "deepdeep_web_search",
-    "deepdeep_web_fetch",
+    "deepdeep_deepseek_search",
+    "deepdeep_deepseek_fetch",
     TAVILY_TOOL,
     "web_search_serpapi",
     "searxng_web_search_general",
@@ -135,11 +135,11 @@ def test_parse_lane_rules():
 def test_guide_has_tech_lane_and_tavily_first_backup():
     guide = ToolRouter().guide(NAMES)
     assert (
-        "- 新闻时事、中文资料、海外新闻、比赛和最新动态：优先 deepdeep_web_search；"
+        "- 新闻时事、中文资料、海外新闻、比赛和最新动态：优先 deepdeep_deepseek_search；"
         f"没有结果或结果不理想时再用 {TAVILY_TOOL}、web_search_serpapi、searxng_web_search_general"
     ) in guide
     assert (
-        f"- 编程、软件版本、安全漏洞、官方文档等技术问题：优先 {TAVILY_TOOL}；不理想时再用 deepdeep_web_search"
+        f"- 编程、软件版本、安全漏洞、官方文档等技术问题：优先 {TAVILY_TOOL}；不理想时再用 deepdeep_deepseek_search"
         in guide
     )
 
@@ -147,7 +147,9 @@ def test_guide_has_tech_lane_and_tavily_first_backup():
 def test_no_lane_tool_keeps_old_guide():
     names = [n for n in NAMES if n != TAVILY_TOOL]
     guide = ToolRouter().guide(names)
-    assert "通用网页搜索（新闻、事实、中文资料等）：优先 deepdeep_web_search" in guide
+    assert (
+        "通用网页搜索（新闻、事实、中文资料等）：优先 deepdeep_deepseek_search" in guide
+    )
     assert "技术问题" not in guide
 
 
@@ -166,7 +168,7 @@ def test_lanes_and_preview_show_tech_lane():
         "fetch",
     ]
     assert lanes[1]["primary"] == TAVILY_TOOL and lanes[1]["backups"] == [
-        "deepdeep_web_search"
+        "deepdeep_deepseek_search"
     ]
     assert lanes[0]["backups"][0] == TAVILY_TOOL
     row = {t["name"]: t for t in r.preview(NAMES)}[TAVILY_TOOL]
@@ -176,7 +178,7 @@ def test_lanes_and_preview_show_tech_lane():
 
 def test_lane_line_dropped_when_tavily_is_general_primary():
     r = ToolRouter(own_enabled=False)
-    names = [n for n in NAMES if not n.startswith("deepdeep_web")]
+    names = [n for n in NAMES if not n.startswith("deepdeep_deepseek")]
     guide = r.guide(names)
     assert f"通用网页搜索（新闻、事实、中文资料等）：优先 {TAVILY_TOOL}" in guide
     assert "技术问题" not in guide

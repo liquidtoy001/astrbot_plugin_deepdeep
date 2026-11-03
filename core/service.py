@@ -67,7 +67,7 @@ class Settings:
 def cfg_int(config: dict[str, Any], key: str, default: int, lo: int, hi: int) -> int:
     try:
         value = int(float(config.get(key, default)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         value = default
     return max(lo, min(hi, value))
 
@@ -78,6 +78,8 @@ def cfg_float(
     try:
         value = float(config.get(key, default))
     except (TypeError, ValueError):
+        value = default
+    if value != value:  # NaN 比较大小的结果不可靠
         value = default
     return max(lo, min(hi, value))
 
@@ -205,6 +207,7 @@ class SearchService:
                 return self._blocked("search", query, rid, avail, detail)
             started = time.monotonic()
             trace: list[dict] = []
+            self.budget.hold()
             try:
                 results = await self.client.search(
                     query,
@@ -215,6 +218,8 @@ class SearchService:
                 )
             except DeepSeekToolsError as exc:
                 return self._on_error("search", query, rid, exc, started, trace, detail)
+            finally:
+                self.budget.release()
             latency = _ms(started)
             detail["attempts"] = trace
             self.breaker.record_success()
@@ -306,10 +311,13 @@ class SearchService:
                 return self._blocked("fetch", url, rid, avail, detail)
             started = time.monotonic()
             trace: list[dict] = []
+            self.budget.hold()
             try:
                 result = await self.client.fetch(url, trace=trace)
             except DeepSeekToolsError as exc:
                 return self._on_error("fetch", url, rid, exc, started, trace, detail)
+            finally:
+                self.budget.release()
             latency = _ms(started)
             detail["attempts"] = trace
             self.breaker.record_success()
@@ -396,9 +404,15 @@ class SearchService:
             note=exc.message + ("（已连续失败，暂停调用）" if opened else ""),
             detail=detail,
         )
-        logger.warning(
+        # 网页不存在或读不了很常见，详情已在调用日志里，不用警告
+        log = (
+            logger.warning
+            if opened or exc.status not in (400, 404, 422)
+            else logger.info
+        )
+        log(
             f"[deepdeep] #{rid} {kind} 失败 status={exc.status} "
-            f"attempts={exc.attempts} detail={exc.detail!r} circuit_opened={opened}"
+            f"attempts={exc.attempts} detail={str(exc.detail)[:160]!r} circuit_opened={opened}"
         )
         if opened:
             logger.info(

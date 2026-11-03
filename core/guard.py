@@ -26,8 +26,8 @@ class Availability:
 class BudgetGuard:
     """日 / 月费用上限。0 表示不限制。
 
-    上限和花费都按计费币种（currency）计算。调用前检查“已花费 + 本次单价”是否超出上限；
-    并发请求可能让实际花费略超上限（最多超出同时在途的请求数 × 单价，不到一分钱）。
+    上限和花费都按计费币种（currency）计算。调用前检查“已花费 + 还没出结果的请求 + 本次单价”
+    是否超出上限，所以同时发出的请求也不会一起越过上限。其他付费服务的在途请求这里看不到。
     """
 
     def __init__(
@@ -46,12 +46,21 @@ class BudgetGuard:
         self.warn_ratio = warn_ratio
         # 其他付费搜索服务本月的估算花费（见 spending.py）。每月上限管的是合计，每日上限只算 DeepSeek
         self.other_month_cost: Callable[[], float] = lambda: 0.0
+        # 已经发出、还不知道收不收费的 DeepSeek 请求
+        self.in_flight = 0
 
     def month_total(self) -> float:
         return self.stats.month_cost() + self.other_month_cost()
 
+    def hold(self) -> None:
+        """检查通过后立刻调用（中间不能有 await），拿到结果后 release。"""
+        self.in_flight += 1
+
+    def release(self) -> None:
+        self.in_flight -= 1
+
     def check(self, kind: str) -> Availability:
-        price = self.stats.price
+        price = self.stats.price * (self.in_flight + 1)
         if (
             self.daily_limit > 0
             and self.stats.cost(1) + price > self.daily_limit + 1e-12

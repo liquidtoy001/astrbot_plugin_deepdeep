@@ -120,23 +120,19 @@
     "routing_mode": {
         "invisible": true,
         "type": "string",
-        "description": "搜索路由模式",
+        "description": "DeepSeek 出问题时怎么办",
         "default": "guide_only",
         "options": [
             "guide_only",
             "deepseek_first",
-            "deepseek_only",
-            "fallback_only",
-            "coexist"
+            "deepseek_only"
         ],
         "labels": [
-            "只引导，不隐藏工具（推荐）",
-            "DeepSeek 优先，隐藏同类工具",
-            "只用 DeepSeek",
-            "暂停 DeepSeek，只用其他搜索",
-            "不干预，也不加分工说明以外的规则"
+            "提醒模型换一家（推荐）",
+            "自动切换",
+            "只用 DeepSeek"
         ],
-        "hint": "“只引导”不隐藏任何工具，只在分工说明里写清先用谁、什么情况再换；工具列表始终不变，不会让模型的提示词缓存失效，长对话最省钱。“DeepSeek 优先”会在 DeepSeek 可用时隐藏同类工具，选择更集中，但每次切换都会让缓存失效一次"
+        "hint": "“提醒模型换一家”不隐藏任何工具，工具列表不变，不影响提示词缓存。“自动切换”平时隐藏同类工具，出问题时才放出来，每次切换会让缓存失效一次。“只用 DeepSeek”不换其他工具。"
     },
     "billing_currency": {
         "invisible": true,
@@ -347,6 +343,27 @@
         "description": "记录其他工具的完整参数和结果",
         "default": false,
         "hint": "默认只记录其他工具的名称、来源、耗时和状态。开启后还会保存它们的调用参数和返回结果（可能包含用户的聊天内容），便于排查"
+    },
+    "kb_trim_min_score": {
+        "invisible": true,
+        "type": "float",
+        "description": "知识库结果的最低分",
+        "default": 0,
+        "hint": "低于这个分数的结果不交给模型，0 表示不过滤。分数范围取决于重排模型，建议先在知识库页看看有用和没用的结果各是多少分。"
+    },
+    "kb_trim_chunk_chars": {
+        "invisible": true,
+        "type": "int",
+        "description": "知识库每条结果最多字数",
+        "default": 0,
+        "hint": "超出的部分截掉，0 表示不限制。设得太小模型可能看不到答案。"
+    },
+    "model_prices": {
+        "invisible": true,
+        "type": "list",
+        "description": "手填的模型价格",
+        "default": [],
+        "hint": "知识库用的嵌入和重排模型。每行“模型 = 价格 币种”，价格按每百万 token，币种写 cny 或 usd。优先于自动获取的价格。"
     },
     "call_log_retention_days": {
         "invisible": true,

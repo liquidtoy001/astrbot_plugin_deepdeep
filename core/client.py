@@ -259,11 +259,23 @@ class DeepSeekToolsClient:
                     url, json=payload, headers=headers, timeout=self._timeout
                 ) as resp:
                     if resp.status == 200:
-                        data = await resp.json(content_type=None)
-                        _trace(trace, attempt, 200, started)
-                        return data
-                    error = await self._build_error(resp)
-                    retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+                        try:
+                            data = await resp.json(content_type=None)
+                        except ValueError as exc:
+                            # 常见于中间的代理返回了网页：和服务端故障一样对待
+                            error = DeepSeekToolsError(
+                                502,
+                                "DeepSeek 搜索服务返回了无法解析的内容，请稍后再试",
+                                detail=type(exc).__name__,
+                            )
+                        else:
+                            _trace(trace, attempt, 200, started)
+                            return data
+                    else:
+                        error = await self._build_error(resp)
+                        retry_after = _parse_retry_after(
+                            resp.headers.get("Retry-After")
+                        )
             except (TimeoutError, asyncio.TimeoutError):
                 error = DeepSeekToolsError(0, "连接 DeepSeek 超时，请稍后再试")
             except aiohttp.ClientError as exc:

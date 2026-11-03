@@ -71,8 +71,8 @@ NOT_FALLBACK = [
     "search_memes",
     "set_user_nickname",
     "harness_submit_code",
-    "deepdeep_web_search",
-    "deepdeep_web_fetch",
+    "deepdeep_deepseek_search",
+    "deepdeep_deepseek_fetch",
 ]
 
 
@@ -87,8 +87,8 @@ def test_community_search_tools_are_recognized():
 
 def test_kimi_and_grok_hidden_while_deepseek_available():
     names = [
-        "deepdeep_web_search",
-        "deepdeep_web_fetch",
+        "deepdeep_deepseek_search",
+        "deepdeep_deepseek_fetch",
         *COMMUNITY_FALLBACK,
         *NOT_FALLBACK,
     ]

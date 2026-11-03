@@ -8,7 +8,7 @@ from core.activity import ActivityLog
 from core.calllog import MAX_RESULT_CHARS, CallLog
 from core.recorder import ToolCallRecorder, detect_source, result_to_text
 
-OWN = ("deepdeep_web_search", "deepdeep_web_fetch")
+OWN = ("deepdeep_deepseek_search", "deepdeep_deepseek_fetch")
 
 
 class Clock:
@@ -49,7 +49,7 @@ def test_store_roundtrip_filters_and_persistence(tmp_path):
     log.finish(a, status="ok", duration_ms=120, result="r" * 10)
     clock.t += 10
     b = log.add(
-        tool="deepdeep_web_search",
+        tool="deepdeep_deepseek_search",
         source="deepseek",
         status="error",
         request_id="abc123",
@@ -83,7 +83,7 @@ def test_store_roundtrip_filters_and_persistence(tmp_path):
         and other["result_chars"] == 10
     )
     facets = log.facets()
-    assert set(facets["tools"]) == {"deepdeep_web_search", "web_search_tavily"}
+    assert set(facets["tools"]) == {"deepdeep_deepseek_search", "web_search_tavily"}
     assert set(facets["sources"]) == {"deepseek", "builtin"}
     log.close()
 
@@ -146,7 +146,7 @@ def test_detect_source():
             else None
         )
 
-    assert detect_source(tool("deepdeep_web_search"), OWN, resolve) == "deepseek"
+    assert detect_source(tool("deepdeep_deepseek_search"), OWN, resolve) == "deepseek"
     assert detect_source(
         tool("x", "data.plugins.web_searcher_pro.services.a"), OWN, resolve
     ) == ("plugin:astrbot_plugin_web_searcher_pro")
@@ -231,7 +231,7 @@ async def test_own_tool_enriched_from_activity(recorder):
             "fallback": {"restored_tools": ["x"]},
         },
     )
-    t = tool("deepdeep_web_search")
+    t = tool("deepdeep_deepseek_search")
     await recorder.on_start(1, None, t, {"query": "q"})
     await recorder.on_end(
         1, t, fake_result("[DeepSeek 搜索 #abc123] 失败 · HTTP 402\n联网搜索失败")
@@ -260,14 +260,14 @@ def test_tool_stats_aggregates_per_tool():
     for status, ms in (("ok", 100), ("ok", 300), ("error", 50), ("blocked", None)):
         rid = log.start(tool="web_search_tavily", source="builtin")
         log.finish(rid, status=status, duration_ms=ms)
-    log.add(tool="deepdeep_web_search", source="deepseek", status="cache_hit")
+    log.add(tool="deepdeep_deepseek_search", source="deepseek", status="cache_hit")
     clock.t += 3600
     log.add(tool="set_user_nickname", source="plugin:x", status="ok", duration_ms=5)
     rows = {r["tool"]: r for r in log.tool_stats()}
     t = rows["web_search_tavily"]
     assert (t["total"], t["ok"], t["error"], t["blocked"]) == (4, 2, 1, 1)
     assert t["avg_ms"] == 150  # 只算真正发出去的请求：(100 + 300 + 50) / 3
-    assert rows["deepdeep_web_search"]["cache_hit"] == 1
+    assert rows["deepdeep_deepseek_search"]["cache_hit"] == 1
     # 时间范围
     assert {r["tool"] for r in log.tool_stats(since=clock.t - 10)} == {
         "set_user_nickname"

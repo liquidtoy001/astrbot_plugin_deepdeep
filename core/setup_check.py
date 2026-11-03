@@ -199,7 +199,7 @@ def check_tavily(status: dict[str, Any]) -> dict[str, Any]:
             "填到 AstrBot「配置 → 网页搜索」的 Tavily Key，或插件配置里的「Tavily API Key」"
             if code == 401
             else f"等下个月额度重置，或到 {TAVILY_SIGNUP_URL} 升级套餐、换一个 Key。"
-            "可以在「高级设置 → Tavily 每月调用上限」里设一个比额度小的数，用完前自动停用"
+            "可以在「设置 → 花费和上限」给 Tavily 设一个比额度小的调用上限，用完前自动停用"
         )
         return {
             **item,

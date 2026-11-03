@@ -1,84 +1,84 @@
 {
  "deepseek_tavily / guide_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "deepdeep_tavily_search",
    "set_user_nickname"
   ],
-  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 新闻时事、中文资料、海外新闻、比赛和最新动态：优先 deepdeep_web_search；没有结果或结果不理想时再用 deepdeep_tavily_search\n- 编程、软件版本、安全漏洞、官方文档等技术问题：优先 deepdeep_tavily_search；不理想时再用 deepdeep_web_search\n- 读取网页全文：deepdeep_web_fetch\n"
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 新闻时事、中文资料、海外新闻、比赛和最新动态：优先 deepdeep_deepseek_search；没有结果或结果不理想时再用 deepdeep_tavily_search\n- 编程、软件版本、安全漏洞、官方文档等技术问题：优先 deepdeep_tavily_search；不理想时再用 deepdeep_deepseek_search\n- 读取网页全文：deepdeep_deepseek_fetch\n"
  },
  "deepseek_tavily / deepseek_first / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "deepdeep_tavily_search",
    "set_user_nickname"
   ],
-  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 新闻时事、中文资料、海外新闻、比赛和最新动态：优先 deepdeep_web_search；没有结果或结果不理想时再用 deepdeep_tavily_search\n- 编程、软件版本、安全漏洞、官方文档等技术问题：优先 deepdeep_tavily_search；不理想时再用 deepdeep_web_search\n- 读取网页全文：deepdeep_web_fetch\n"
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 新闻时事、中文资料、海外新闻、比赛和最新动态：优先 deepdeep_deepseek_search；没有结果或结果不理想时再用 deepdeep_tavily_search\n- 编程、软件版本、安全漏洞、官方文档等技术问题：优先 deepdeep_tavily_search；不理想时再用 deepdeep_deepseek_search\n- 读取网页全文：deepdeep_deepseek_fetch\n"
  },
  "deepseek_tavily / deepseek_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
  },
  "deepseek_tavily / guide_only / cheap": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "deepdeep_tavily_search",
    "set_user_nickname"
   ],
-  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：优先 deepdeep_tavily_search；没有结果或结果不理想时再用 deepdeep_web_search\n- 读取网页全文：deepdeep_web_fetch\n"
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：优先 deepdeep_tavily_search；没有结果或结果不理想时再用 deepdeep_deepseek_search\n- 读取网页全文：deepdeep_deepseek_fetch\n"
  },
  "deepseek_tavily / guide_only / zh": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "deepdeep_tavily_search",
    "set_user_nickname"
   ],
-  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：优先 deepdeep_web_search；没有结果或结果不理想时再用 deepdeep_tavily_search\n- 读取网页全文：deepdeep_web_fetch\n"
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：优先 deepdeep_deepseek_search；没有结果或结果不理想时再用 deepdeep_tavily_search\n- 读取网页全文：deepdeep_deepseek_fetch\n"
  },
  "deepseek_only / guide_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
  },
  "deepseek_only / deepseek_first / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
  },
  "deepseek_only / deepseek_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
  },
  "deepseek_only / guide_only / cheap": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
  },
  "deepseek_only / guide_only / zh": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
@@ -99,8 +99,8 @@
  },
  "no_key_bocha / deepseek_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
@@ -143,12 +143,12 @@
  },
  "no_key_searxng / deepseek_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname",
    "searxng_web_search_images"
   ],
-  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：deepdeep_web_search\n- 读取网页全文：deepdeep_web_fetch\n- 找图片：searxng_web_search_images\n"
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：deepdeep_deepseek_search\n- 读取网页全文：deepdeep_deepseek_fetch\n- 找图片：searxng_web_search_images\n"
  },
  "no_key_searxng / guide_only / cheap": {
   "tools": [
@@ -192,8 +192,8 @@
  },
  "no_key_brave_exa_plugin / deepseek_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
@@ -218,40 +218,40 @@
  },
  "no_key_nothing_else / guide_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
  },
  "no_key_nothing_else / deepseek_first / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
  },
  "no_key_nothing_else / deepseek_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
  },
  "no_key_nothing_else / guide_only / cheap": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
  },
  "no_key_nothing_else / guide_only / zh": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
@@ -324,8 +324,8 @@
  },
  "no_key_tavily_builtin / deepseek_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
@@ -364,8 +364,8 @@
  },
  "no_key_firecrawl / deepseek_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
@@ -402,8 +402,8 @@
  },
  "no_key_baidu / deepseek_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
@@ -440,8 +440,8 @@
  },
  "no_key_exa_builtin / deepseek_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
@@ -478,8 +478,8 @@
  },
  "no_key_anysearch_builtin / deepseek_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
@@ -570,8 +570,8 @@
  },
  "no_key_plugins / deepseek_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname"
   ],
   "system_prompt": ""
@@ -608,8 +608,8 @@
  },
  "deepseek_everything / guide_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "deepdeep_tavily_search",
    "set_user_nickname",
    "searxng_web_search_general",
@@ -632,12 +632,12 @@
    "finance_search_serpapi",
    "scholar_search_serpapi"
   ],
-  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 新闻时事、中文资料、海外新闻、比赛和最新动态：优先 deepdeep_web_search；没有结果或结果不理想时再用 deepdeep_tavily_search、web_search_serpapi、searxng_web_search_general 等 8 个\n- 编程、软件版本、安全漏洞、官方文档等技术问题：优先 deepdeep_tavily_search；不理想时再用 deepdeep_web_search\n- 读取网页全文：优先 deepdeep_web_fetch；读取失败时再用 searxng_web_fetch_url、deepseek_fetch_web_page\n- 找图片：image_search_serpapi、searxng_web_search_images\n- 股票、汇率等财经行情：finance_search_serpapi\n- 学术论文和期刊：scholar_search_serpapi\n- 学术论文（arXiv 等）：search_papers、download_paper\n- GitHub 上的仓库、代码、Issue 和 PR：search_code、search_issues、search_repositories\n- 本地知识库里的资料：astr_kb_search\n"
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 新闻时事、中文资料、海外新闻、比赛和最新动态：优先 deepdeep_deepseek_search；没有结果或结果不理想时再用 deepdeep_tavily_search、web_search_serpapi、searxng_web_search_general 等 8 个\n- 编程、软件版本、安全漏洞、官方文档等技术问题：优先 deepdeep_tavily_search；不理想时再用 deepdeep_deepseek_search\n- 读取网页全文：优先 deepdeep_deepseek_fetch；读取失败时再用 searxng_web_fetch_url、deepseek_fetch_web_page\n- 找图片：image_search_serpapi、searxng_web_search_images\n- 股票、汇率等财经行情：finance_search_serpapi\n- 学术论文和期刊：scholar_search_serpapi\n- 学术论文（arXiv 等）：search_papers、download_paper\n- GitHub 上的仓库、代码、Issue 和 PR：search_code、search_issues、search_repositories\n- 本地知识库里的资料：astr_kb_search\n"
  },
  "deepseek_everything / deepseek_first / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "deepdeep_tavily_search",
    "set_user_nickname",
    "searxng_web_search_images",
@@ -651,12 +651,12 @@
    "finance_search_serpapi",
    "scholar_search_serpapi"
   ],
-  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 新闻时事、中文资料、海外新闻、比赛和最新动态：优先 deepdeep_web_search；没有结果或结果不理想时再用 deepdeep_tavily_search\n- 编程、软件版本、安全漏洞、官方文档等技术问题：优先 deepdeep_tavily_search；不理想时再用 deepdeep_web_search\n- 读取网页全文：deepdeep_web_fetch\n- 找图片：image_search_serpapi、searxng_web_search_images\n- 股票、汇率等财经行情：finance_search_serpapi\n- 学术论文和期刊：scholar_search_serpapi\n- 学术论文（arXiv 等）：search_papers、download_paper\n- GitHub 上的仓库、代码、Issue 和 PR：search_code、search_issues、search_repositories\n- 本地知识库里的资料：astr_kb_search\n"
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 新闻时事、中文资料、海外新闻、比赛和最新动态：优先 deepdeep_deepseek_search；没有结果或结果不理想时再用 deepdeep_tavily_search\n- 编程、软件版本、安全漏洞、官方文档等技术问题：优先 deepdeep_tavily_search；不理想时再用 deepdeep_deepseek_search\n- 读取网页全文：deepdeep_deepseek_fetch\n- 找图片：image_search_serpapi、searxng_web_search_images\n- 股票、汇率等财经行情：finance_search_serpapi\n- 学术论文和期刊：scholar_search_serpapi\n- 学术论文（arXiv 等）：search_papers、download_paper\n- GitHub 上的仓库、代码、Issue 和 PR：search_code、search_issues、search_repositories\n- 本地知识库里的资料：astr_kb_search\n"
  },
  "deepseek_everything / deepseek_only / rec": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "set_user_nickname",
    "searxng_web_search_images",
    "search_repositories",
@@ -669,12 +669,12 @@
    "finance_search_serpapi",
    "scholar_search_serpapi"
   ],
-  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：deepdeep_web_search\n- 读取网页全文：deepdeep_web_fetch\n- 找图片：image_search_serpapi、searxng_web_search_images\n- 股票、汇率等财经行情：finance_search_serpapi\n- 学术论文和期刊：scholar_search_serpapi\n- 学术论文（arXiv 等）：search_papers、download_paper\n- GitHub 上的仓库、代码、Issue 和 PR：search_code、search_issues、search_repositories\n- 本地知识库里的资料：astr_kb_search\n"
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：deepdeep_deepseek_search\n- 读取网页全文：deepdeep_deepseek_fetch\n- 找图片：image_search_serpapi、searxng_web_search_images\n- 股票、汇率等财经行情：finance_search_serpapi\n- 学术论文和期刊：scholar_search_serpapi\n- 学术论文（arXiv 等）：search_papers、download_paper\n- GitHub 上的仓库、代码、Issue 和 PR：search_code、search_issues、search_repositories\n- 本地知识库里的资料：astr_kb_search\n"
  },
  "deepseek_everything / guide_only / cheap": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "deepdeep_tavily_search",
    "set_user_nickname",
    "searxng_web_search_general",
@@ -697,12 +697,12 @@
    "finance_search_serpapi",
    "scholar_search_serpapi"
   ],
-  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 新闻时事、中文资料、海外新闻、比赛和最新动态：优先 searxng_web_search_general；没有结果或结果不理想时再用 deepdeep_tavily_search、web_search_serpapi、deepdeep_web_search 等 8 个\n- 编程、软件版本、安全漏洞、官方文档等技术问题：优先 deepdeep_tavily_search；不理想时再用 searxng_web_search_general、web_search_serpapi\n- 读取网页全文：优先 searxng_web_fetch_url；读取失败时再用 deepdeep_web_fetch、deepseek_fetch_web_page\n- 找图片：image_search_serpapi、searxng_web_search_images\n- 股票、汇率等财经行情：finance_search_serpapi\n- 学术论文和期刊：scholar_search_serpapi\n- 学术论文（arXiv 等）：search_papers、download_paper\n- GitHub 上的仓库、代码、Issue 和 PR：search_code、search_issues、search_repositories\n- 本地知识库里的资料：astr_kb_search\n"
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 新闻时事、中文资料、海外新闻、比赛和最新动态：优先 searxng_web_search_general；没有结果或结果不理想时再用 deepdeep_tavily_search、web_search_serpapi、deepdeep_deepseek_search 等 8 个\n- 编程、软件版本、安全漏洞、官方文档等技术问题：优先 deepdeep_tavily_search；不理想时再用 searxng_web_search_general、web_search_serpapi\n- 读取网页全文：优先 searxng_web_fetch_url；读取失败时再用 deepdeep_deepseek_fetch、deepseek_fetch_web_page\n- 找图片：image_search_serpapi、searxng_web_search_images\n- 股票、汇率等财经行情：finance_search_serpapi\n- 学术论文和期刊：scholar_search_serpapi\n- 学术论文（arXiv 等）：search_papers、download_paper\n- GitHub 上的仓库、代码、Issue 和 PR：search_code、search_issues、search_repositories\n- 本地知识库里的资料：astr_kb_search\n"
  },
  "deepseek_everything / guide_only / zh": {
   "tools": [
-   "deepdeep_web_search",
-   "deepdeep_web_fetch",
+   "deepdeep_deepseek_search",
+   "deepdeep_deepseek_fetch",
    "deepdeep_tavily_search",
    "set_user_nickname",
    "searxng_web_search_general",
@@ -725,6 +725,6 @@
    "finance_search_serpapi",
    "scholar_search_serpapi"
   ],
-  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：优先 deepdeep_web_search；没有结果或结果不理想时再用 kimi_web_search、web_search_deepseek、web_search_serpapi 等 8 个\n- 读取网页全文：优先 deepdeep_web_fetch；读取失败时再用 deepseek_fetch_web_page、searxng_web_fetch_url\n- 找图片：image_search_serpapi、searxng_web_search_images\n- 股票、汇率等财经行情：finance_search_serpapi\n- 学术论文和期刊：scholar_search_serpapi\n- 学术论文（arXiv 等）：search_papers、download_paper\n- GitHub 上的仓库、代码、Issue 和 PR：search_code、search_issues、search_repositories\n- 本地知识库里的资料：astr_kb_search\n"
+  "system_prompt": "\n\n【搜索工具分工】先选最对口的工具，结果不理想时再换：\n- 通用网页搜索（新闻、事实、中文资料等）：优先 deepdeep_deepseek_search；没有结果或结果不理想时再用 kimi_web_search、web_search_deepseek、web_search_serpapi 等 8 个\n- 读取网页全文：优先 deepdeep_deepseek_fetch；读取失败时再用 deepseek_fetch_web_page、searxng_web_fetch_url\n- 找图片：image_search_serpapi、searxng_web_search_images\n- 股票、汇率等财经行情：finance_search_serpapi\n- 学术论文和期刊：scholar_search_serpapi\n- 学术论文（arXiv 等）：search_papers、download_paper\n- GitHub 上的仓库、代码、Issue 和 PR：search_code、search_issues、search_repositories\n- 本地知识库里的资料：astr_kb_search\n"
  }
 }

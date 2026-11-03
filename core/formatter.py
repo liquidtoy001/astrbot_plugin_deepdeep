@@ -161,9 +161,7 @@ def format_search_results(
         blocks.append(block)
         used += len(block) + 2
 
-    footer = (
-        "回答时请注明信息来源链接；如需某个网页的完整内容，可调用 deepdeep_web_fetch。"
-    )
+    footer = "回答时请注明信息来源链接；如需某个网页的完整内容，可调用 deepdeep_deepseek_fetch。"
     return "\n\n".join([header, *blocks, footer])
 
 
