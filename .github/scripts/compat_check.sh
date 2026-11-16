@@ -69,13 +69,13 @@ docker logs "$NAME" 2>&1 | sed -E 's/\x1b\[[0-9;]*m//g' >"$WORK/astrbot.log"
 } >>"$REPORT"
 
 loaded=$(grep -cE "Plugin ${PLUGIN} \(v" "$WORK/astrbot.log" || true)
-tools=$(grep -cE "Added llm tool: deepdeep_(web_search|web_fetch|tavily_search)" "$WORK/astrbot.log" || true)
+tools=$(grep -cE "Added llm tool: deepdeep_(deepseek_search|deepseek_fetch|tavily_search)" "$WORK/astrbot.log" || true)
 # 和本插件有关的报错：错误行本身提到插件，或 Traceback 里出现插件路径
 errors=$(grep -iE "deepdeep" "$WORK/astrbot.log" | grep -iE "error|exception|traceback|failed|失败" || true)
 tb=$(grep -A25 "Traceback" "$WORK/astrbot.log" | grep -B5 -A20 "$PLUGIN" | head -60 || true)
 
 grep -m1 -oE "AstrBot v[0-9][0-9a-z.\-]*" "$WORK/astrbot.log" | tee -a "$REPORT" || true
-grep -E "$PLUGIN|deepdeep_(web|tavily)" "$WORK/astrbot.log" | cut -c1-200 | tee -a "$REPORT" || true
+grep -E "$PLUGIN|deepdeep_(deepseek|tavily)" "$WORK/astrbot.log" | cut -c1-200 | tee -a "$REPORT" || true
 if [ "$loaded" -lt 1 ]; then
   echo "✗ 插件没有加载成功" | tee -a "$REPORT"
   status=1

@@ -215,23 +215,44 @@ def _provider_keys():
 check("Provider.get_keys（复用提供商 Key）", _provider_keys)
 
 
+def _source(*modules: str) -> str | None:
+    """按顺序找第一个存在的模块：AstrBot 4.30 把 Agent 相关代码搬进了 astr_agent_runtime。"""
+    for name in modules:
+        try:
+            return inspect.getsource(importlib.import_module(name))
+        except ModuleNotFoundError:
+            continue
+    return None
+
+
 def _hook_order():
-    mod = importlib.import_module(
+    # 4.29 及以前：在 internal 里调用钩子，之后 reset 创建 Agent
+    src = _source(
         "astrbot.core.pipeline.process_stage.method.agent_sub_stages.internal"
     )
-    src = inspect.getsource(mod)
-    i_hook = src.find("EventType.OnLLMRequestEvent")
-    i_reset = src.find("await reset_coro")
-    if i_hook == -1:
+    if src and "EventType.OnLLMRequestEvent" in src:
+        i_reset = src.find("await reset_coro")
+        return i_reset == -1 or src.find("EventType.OnLLMRequestEvent") < i_reset
+    # 4.30 起：主 Agent 在 builder 里先调用钩子再创建 runner，普通对话打开了这个开关
+    builder = _source("astrbot.core.astr_agent_runtime.main_agent.builder")
+    session = _source("astrbot.core.astr_agent_runtime.main_session")
+    if not builder or "EventType.OnLLMRequestEvent" not in builder:
         raise LookupError("找不到 on_llm_request 的调用")
-    return i_reset == -1 or i_hook < i_reset
+    if not session or "call_request_hook=True" not in session:
+        raise LookupError("普通对话没有打开 call_request_hook")
+    i_runner = builder.find("create_native_runner(")
+    return i_runner == -1 or builder.find("EventType.OnLLMRequestEvent") < i_runner
 
 
 check("on_llm_request 在 Agent 重置之前触发（路由依赖它）", _hook_order)
 
 
 def _tool_hooks_fired():
-    src = inspect.getsource(importlib.import_module("astrbot.core.astr_agent_hooks"))
+    src = _source(
+        "astrbot.core.astr_agent_hooks", "astrbot.core.astr_agent_runtime.hooks"
+    )
+    if src is None:
+        raise LookupError("找不到 Agent 钩子模块")
     return "OnUsingLLMToolEvent" in src and "OnLLMToolRespondEvent" in src
 
 
