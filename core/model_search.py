@@ -4,7 +4,8 @@
 这里只读提供商配置，不发请求、不改配置。对照 AstrBot 4.29（2026-10）的提供商配置：
 - Gemini：gm_native_search（Google 搜索）、gm_url_context（读取链接）。AstrBot 的说明是原生工具和函数工具同时使用只支持 Gemini 3 及以上模型
 - xAI：xai_native_search（Live Search，按信息源计费）
-- 其余厂商靠「自定义请求体」（custom_extra_body）开启，比如通义千问的 enable_search
+- 其余厂商靠「自定义请求体」（custom_extra_body）开启，比如通义千问的 enable_search、
+  DeepSeek 的 deepseek_web_search / deepseek_read_url 工具（2026-11-13 发布，工具本身不收费，搜到的内容按 token 计费）
 - 有些模型本身就带搜索（OpenAI 的 *-search-preview、Perplexity 的 sonar、OpenRouter 的 :online 后缀）
 """
 
@@ -81,11 +82,21 @@ def _extra_body_search(body: Any) -> tuple[str, bool] | None:
                 continue
             kind = str(t.get("type") or "")
             name = str((t.get("function") or {}).get("name") or "")
+            if kind == "deepseek_web_search":
+                return "tools: deepseek_web_search（DeepSeek）", False
             if kind.startswith("web_search") or kind == "google_search":
                 return f"tools: {kind}", True
             if name == "$web_search":
                 return "tools: $web_search（Kimi）", True
     return None
+
+
+def _reads_urls(body: Any) -> bool:
+    """自定义请求体里开了 DeepSeek 的读取链接工具。"""
+    tools = body.get("tools") if isinstance(body, dict) else None
+    return isinstance(tools, list) and any(
+        isinstance(t, dict) and t.get("type") == "deepseek_read_url" for t in tools
+    )
 
 
 def detect(
@@ -120,13 +131,15 @@ def detect(
             extra_cost=True,
             config_keys=["xai_native_search"],
         )
-    found = _extra_body_search(pc.get("custom_extra_body"))
+    body = pc.get("custom_extra_body")
+    found = _extra_body_search(body)
     if found:
         return ModelSearch(
             **base,
             method="extra_body",
             label=f"自定义请求体：{found[0]}",
             extra_cost=found[1],
+            url_context=_reads_urls(body),
             config_keys=["custom_extra_body"],
         )
     lowered = model.lower()
@@ -141,6 +154,14 @@ def detect(
             label="Gemini 读取链接（URL Context）",
             url_context=True,
             config_keys=["gm_url_context"],
+        )
+    if _reads_urls(body):
+        return ModelSearch(
+            **base,
+            method="extra_body_url",
+            label="DeepSeek 读取链接（deepseek_read_url）",
+            url_context=True,
+            config_keys=["custom_extra_body"],
         )
     return None
 

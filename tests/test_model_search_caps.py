@@ -1,5 +1,6 @@
 """对话模型内置的联网搜索、其他搜索工具的每月调用上限、Tavily 按 Key 记录失败。"""
 
+from dataclasses import asdict
 from datetime import date
 
 from core import model_search as ms
@@ -39,6 +40,19 @@ def test_detect_extra_body_and_model_names():
         m = ms.detect({"id": "p", "custom_extra_body": body}, "m")
         assert m is not None and m.method == "extra_body" and marker in m.label, marker
     assert ms.detect({"id": "p", "custom_extra_body": {"enable_search": False}}) is None
+
+
+def test_detect_deepseek_server_tools():
+    both = {"tools": [{"type": "deepseek_web_search"}, {"type": "deepseek_read_url"}]}
+    m = ms.detect({"id": "p", "custom_extra_body": both}, "deepseek-flash")
+    # 工具本身不收费，搜到的内容按 token 计费
+    assert m.method == "extra_body" and "deepseek_web_search" in m.label
+    assert m.url_context and not m.extra_cost
+    read = {"tools": [{"type": "deepseek_read_url"}]}
+    m = ms.detect({"id": "p", "custom_extra_body": read}, "deepseek-flash")
+    assert m.method == "extra_body_url" and m.url_context and not m.extra_cost
+    item = sc.check_model_search([asdict(m)])[0]
+    assert "deepseek_read_url" in item["fix"] and "搜索" not in item["detail"]
     off = {"search_parameters": {"mode": "off"}}
     assert ms.detect({"id": "p", "custom_extra_body": off}) is None
     for model in ("gpt-4o-search-preview", "sonar-pro", "perplexity/sonar", "x:online"):

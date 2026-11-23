@@ -46,7 +46,7 @@ from .core.tavily import TavilyClient, TavilySearch
 from .core.web_api import WebApi
 
 PLUGIN_NAME = "astrbot_plugin_deepdeep"
-PLUGIN_VERSION = "v1.2.0"
+PLUGIN_VERSION = "v1.2.1"
 ROUTING_EXTRA_KEY = "deepdeep_routing"
 
 # 这些情况不是 DeepSeek 故障（某个网页抓不到、没搜到、结果相关度低）：

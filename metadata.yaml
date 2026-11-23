@@ -2,7 +2,7 @@ name: astrbot_plugin_deepdeep
 display_name: DeepDeep 搜索管理器
 desc: 统一管理和监控 AstrBot 的联网搜索（内置和社区插件）、知识库（内置和社区插件）和 MCP：自动选对搜索工具，出错就换一家，付费搜索到上限自动停，帮你改善搜索质量、看清花费。
 short_desc: AstrBot 搜索管理器：管理和监控内置和社区插件的搜索、知识库以及 MCP，选对工具，出错就换，管住花费
-version: v1.2.0
+version: v1.2.1
 author: Turino
 repo: https://github.com/liquidtoy001/astrbot_plugin_deepdeep
 astrbot_version: ">=4.26.0,<5" # 需要插件页面（pages）和 astrbot.api.web，二者自 4.26.0 起提供

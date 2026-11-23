@@ -294,6 +294,11 @@ def check_model_search(models: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 f"开启了{m.get('label')}：模型能自己读取网页，和网页读取工具作用重复"
             )
             fix = f"一般不用处理；想统一由 DeepDeep 读取网页的话，{where}，关闭「启用 URL 上下文」"
+        elif m.get("method") == "extra_body_url":
+            detail = (
+                f"开启了{m.get('label')}：模型能自己读取网页，和网页读取工具作用重复"
+            )
+            fix = f"一般不用处理；想统一由 DeepDeep 读取网页的话，{where}，去掉「自定义请求体」里的 deepseek_read_url"
         else:
             detail = (
                 f"开启了{m.get('label')}：模型会自己联网搜索，和搜索工具作用重复"

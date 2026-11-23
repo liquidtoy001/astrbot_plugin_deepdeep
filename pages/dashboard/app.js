@@ -2216,7 +2216,7 @@ function renderModels(models) {
     const notes = [];
     if (m.tools_broken) notes.push(t("按 AstrBot 的说明，原生工具和函数工具同时使用只支持 Gemini 3 及以上模型，其他模型上 DeepDeep 和其他搜索工具可能都调用不了"));
     if (m.extra_cost) notes.push(t("会额外计费"));
-    if (m.method !== "gemini_url") notes.push(t("和搜索工具作用重复，可能搜两遍"));
+    if (!m.method.endsWith("_url")) notes.push(t("和搜索工具作用重复，可能搜两遍"));
     list.append(
       el(
         "li",
@@ -2229,7 +2229,7 @@ function renderModels(models) {
           m.model ? el("span", { class: "muted small" }, ` · ${m.model}`) : null,
           el("div", { class: "small" }, tr(m.label)),
           el("div", { class: "muted small" }, notes.join(I18N.getLang() === "en" ? "; " : "；")),
-          m.enabled ? el("div", { class: "small fix" }, t("想关掉的话：在 AstrBot「提供商」里编辑 {id}，关闭{what}", { id: m.provider_id, what: m.method === "extra_body" ? t("「自定义请求体」里的搜索参数") : m.method === "model" ? t("（换一个不带搜索的模型）") : t("「启用原生搜索功能」") })) : null,
+          m.enabled ? el("div", { class: "small fix" }, t("想关掉的话：在 AstrBot「提供商」里编辑 {id}，关闭{what}", { id: m.provider_id, what: m.method === "extra_body" ? t("「自定义请求体」里的搜索参数") : m.method === "extra_body_url" ? t("「自定义请求体」里的 deepseek_read_url") : m.method === "model" ? t("（换一个不带搜索的模型）") : t("「启用原生搜索功能」") })) : null,
         ),
       ),
     );
